@@ -1195,7 +1195,7 @@ We use `USB DFU` download to download the compiled executable to the development
 
 ## Submitting the Assignment
 
-You should push all your commits to the designated repository (hw5-\<Name of your GitHub account\>) under the compiler-f20 GitHub organization by the deadline (given in the very beginning of this assignment description).
+You should push all your commits to the designated repository (hw5-\<Name of your GitHub account\>) under the compiler-s21 GitHub organization by the deadline (given in the very beginning of this assignment description).
 At any point, you may save your work and push commits to your repository. You **must** commit your final version to the **master branch**, and we will grade the commit which is last pushed on your master branch. The **push time** of that commit will be your submission time, so you should not push any commits to the master branch after the deadline if you have finished your assignment; otherwise, you will get a late penalty.
 
 
