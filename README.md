@@ -2,9 +2,9 @@
 
 **Introduction to Compiler Design by Prof. Yi-Ping You**
 
-Due Date: **23:59, January 17, 2021**
+Due Date: **23:59, June 23, 2021**
 
-Late homework deadline: **23:59, January 19, 2021**
+Late homework deadline: **23:59, June 25, 2021**
 
 Your assignment is to generate `RISC-V instructions` for the **`P`** language based on the `AST` and `symbol table` that you have built in the previous assignments. The generated code will then be executed on a RISC-V simulator, called `Spike`.
 
