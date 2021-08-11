@@ -1117,6 +1117,8 @@ If you want to preview your report in GitHub style markdown before pushing to Gi
     <b><a href="#table-of-contents">↥ back to menu</a></b>
 </div>
 
+
+
 ## Assessment Rubrics (Grading)
 
 Total of 119 points.
@@ -1135,6 +1137,10 @@ Total of 119 points.
 </div>
 
 ## Build and Execute
+
+!! **Attention**
+  If you're using a Mac, and you encounter problems when executing `./activate_docker.sh`. You can try commenting out or removing line 78 in `docker/activate_docker.py`. We're still resolving to find a way to mount in Docker on Mac. So if you're using a Mac, please just use the emulator to test your homework.
+  
 
 - Get Hw5 docker image: `make docker-pull`
 - Activate docker environment: `./activate_docker.sh`
