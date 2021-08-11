@@ -1,5 +1,5 @@
-#ifndef __VISITOR_AST_NODE_INCLUDE_H
-#define __VISITOR_AST_NODE_INCLUDE_H
+#ifndef VISITOR_AST_NODE_INCLUDE_H
+#define VISITOR_AST_NODE_INCLUDE_H
 
 // used for all derived classes from base class AstNodeVisitor
 // to include in their implementation file
