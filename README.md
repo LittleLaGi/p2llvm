@@ -13,10 +13,15 @@ Your assignment is to generate `RISC-V instructions` for the **`P`** language ba
 ## Table of Contents
 
 - [Project Assignment 5 - Code Generation](#project-assignment-5---code-generation)
+  - [Table of Contents](#table-of-contents)
   - [Assignment](#assignment)
   - [Generating RISC-V Instructions](#generating-risc-v-instructions)
     - [Initialization](#initialization)
     - [Declarations of Variables and Constants](#declarations-of-variables-and-constants)
+      - [Global Variables](#global-variables)
+      - [Local Variables](#local-variables)
+      - [Global Constants](#global-constants)
+      - [Local Constants](#local-constants)
     - [Expression](#expression)
     - [Function Declaration and Invocation](#function-declaration-and-invocation)
     - [Simple Statement](#simple-statement)
@@ -24,15 +29,24 @@ Your assignment is to generate `RISC-V instructions` for the **`P`** language ba
     - [For Statement and While Statement](#for-statement-and-while-statement)
     - [Combining All Examples Above](#combining-all-examples-above)
     - [Bonus](#bonus)
+      - [Boolean Type](#boolean-type)
+      - [Array Type](#array-type)
+      - [String Type](#string-type)
+      - [Real Type](#real-type)
   - [Implementation Hints](#implementation-hints)
+    - [Using `C` compiler that targets RISC-V](#using-c-compiler-that-targets-risc-v)
   - [Project Structure](#project-structure)
   - [Assessment Rubrics (Grading)](#assessment-rubrics-grading)
   - [Build and Execute](#build-and-execute)
+    - [Build Project](#build-project)
+    - [Test your compiler with the simulator](#test-your-compiler-with-the-simulator)
+    - [Simulator Commands](#simulator-commands)
+    - [Test your compiler with the RISC-V development board](#test-your-compiler-with-the-risc-v-development-board)
   - [Submitting the Assignment](#submitting-the-assignment)
 
 ---
 
-## Assignment     
+## Assignment
 
 In order to keep this assignment simple, only the `integer` type is needed to be implemented and the `array` type is not considered. Your assignment is to generate `RISC-V` instructions for a `P` program that contains any of the following constructs:
 
@@ -46,7 +60,7 @@ In order to keep this assignment simple, only the `integer` type is needed to be
  - Conditional statement.
  - For statement and while statement.
 
-The generated `RISC-V` instructions should be saved in a file with the same name as the input `P` file but with a `.S` extension. In addition, the file should be stored in a directory, which is set by the flag `--save-path [save path]`. For example, the following command translates `./test.p` into `./output_riscv_code/test/test.S`. 
+The generated `RISC-V` instructions should be saved in a file with the same name as the input `P` file but with a `.S` extension. In addition, the file should be stored in a directory, which is set by the flag `--save-path [save path]`. For example, the following command translates `./test.p` into `./output_riscv_code/test/test.S`.
 
 ```
 ./compiler test.p --save-path ./output_riscv_code/test
@@ -56,18 +70,18 @@ The generated `RISC-V` instructions should be saved in a file with the same name
     <b><a href="#table-of-contents">↥ back to menu</a></b>
 </div>
 
-## Generating RISC-V Instructions                        
+## Generating RISC-V Instructions
 
  > In the following subsections, we provide some examples of how to translate a `P` construct into RISC-V instructions. You may design your own instruction selection rules, as long as the generated code does what it should do. We recommend you read the [`RISC-V` tutorial](RISC-V-tutorial) before getting into the following subsections.
 
-For all the examples below, we use a simple computation model called [**stack machine**](https://en.wikipedia.org/wiki/Stack_machine). 
+For all the examples below, we use a simple computation model called [**stack machine**](https://en.wikipedia.org/wiki/Stack_machine).
 
- - When traversing to a `variable reference` node, push the **value** of the variable on the stack if it appears on the `RHS` of the `assignment` node, or push the **address** of the variable to the stack if it's on the `LHS` of the `assignment` node. 
+ - When traversing to a `variable reference` node, push the **value** of the variable on the stack if it appears on the `RHS` of the `assignment` node, or push the **address** of the variable to the stack if it's on the `LHS` of the `assignment` node.
 
- - When traversing to a `computation` node, (1) pop the values on the stack to some registers, and (2) then compute the result with one or more instructions, and (3) finally push the result back to the stack. 
- 
- - When traversing to an `assignment` node, (1) pop the value and the address on the stack to some registers, and (2) then store the value to that address. 
- 
+ - When traversing to a `computation` node, (1) pop the values on the stack to some registers, and (2) then compute the result with one or more instructions, and (3) finally push the result back to the stack.
+
+ - When traversing to an `assignment` node, (1) pop the value and the address on the stack to some registers, and (2) then store the value to that address.
+
  - For more precise steps, see [simple compilers](https://en.wikipedia.org/wiki/Stack_machine#Simple_compilers).
 
 ---
@@ -125,10 +139,10 @@ The generated `RISC-V` code will have the following structure:
         lw s0, 120(sp)       # move frame pointer back to the bottom of the last stack
         addi sp, sp, 128     # move stack pointer back to the top of the last stack
         jr ra                # jump back to the caller function
-        .size main, .-main 
+        .size main, .-main
     ```
 
-A function `main` must be generated for the compound statement (program body) in the program node. 
+A function `main` must be generated for the compound statement (program body) in the program node.
 
 You should allocate a local memory in the function prologue and clear the local memory in the function epilogue. In this assignment, allocate **128 bytes** of local memories is sufficient for the parameters and the local variables. However, in modern compilers, the size of the local memory depends on the demand of the function.
 
@@ -203,7 +217,7 @@ You should allocate a local memory in the function prologue and clear the local 
     sw t0, 0(t1)     # b = 5
     addi t0, s0, -16
     addi sp, sp, -4
-    sw t0, 0(sp)     # push the address to the stack   
+    sw t0, 0(sp)     # push the address to the stack
     li t0, 6
     addi sp, sp, -4
     sw t0, 0(sp)     # push the value to the stack
@@ -230,7 +244,7 @@ You should allocate a local memory in the function prologue and clear the local 
         .globl d              # emit symbol 'd' to the global symbol table
         .type d, @object
     d:
-        .word 5 
+        .word 5
     ```
 
 #### Local Constants
@@ -256,7 +270,7 @@ The same as local variables.
     la t0, a          # load the address of 'a'
     sw t0, 0(sp)      # push the address to the stack
     lw t0, -12(s0)    # load the value of 'b'
-    addi sp, sp, -4  
+    addi sp, sp, -4
     sw t0, 0(sp)      # push the value to the stack
     lw t0, -16(s0)    # load the value of 'c'
     addi sp, sp, -4
@@ -401,8 +415,8 @@ The same as local variables.
 It's a little complicated to call an `IO` system call, so we provide you **print** functions and **read** functions in `io.c`. You can compile and link your generated code with the functions by:
 
 ```
-riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF file] 
-``` 
+riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF file]
+```
 
  - Printing a global variable `a`
 
@@ -433,7 +447,7 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
 
     ```assembly
     la t0, a         # load the address of 'a'
-    addi sp, sp, -4 
+    addi sp, sp, -4
     sw t0, 0(sp)     # push the address to the stack
     jal ra, readInt  # call function 'readInt'
     lw t0, 0(sp)     # pop the address from the stack
@@ -450,7 +464,7 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
  - Branching according to `a`'s value
 
     ```p
-    if ( a <= 40 ) then  
+    if ( a <= 40 ) then
     begin
         print a;
     end
@@ -464,7 +478,7 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
     will be translated into the following `RISC-V` instructions.
 
     ```assembly
-        la t0, a    
+        la t0, a
         lw t1, 0(t0)          # load the value of 'a'
         mv t0, t1
         addi sp, sp, -4
@@ -518,7 +532,7 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
 
     ```assembly
     L3:
-        lw t0, -12(s0)        # load the value of 'b' 
+        lw t0, -12(s0)        # load the value of 'b'
         addi sp, sp, -4
         sw t0, 0(sp)          # push the value to the stack
         li t0, 8
@@ -551,20 +565,20 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
         addi sp, sp, 4
         add t0, t1, t0        # b + 1, always save the value in a certain register you choose
         addi sp, sp, -4
-        sw t0, 0(sp)          # push the value to the stack     
+        sw t0, 0(sp)          # push the value to the stack
         lw t0, 0(sp)          # pop the value from the stack
         addi sp, sp, 4
         lw t1, 0(sp)          # pop the address from the stack
         addi sp, sp, 4
-        sw t0, 0(t1)          # save the value to 'b' 
+        sw t0, 0(t1)          # save the value to 'b'
         j L3                  # jump back to loop condition
-    L5: 
+    L5:
     ```
 
  - Looping with loop variable `i`
 
     ```p
-    for i := 10 to 13 do 
+    for i := 10 to 13 do
     begin
         print i;
     end
@@ -581,12 +595,12 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
         addi sp, sp, -4
         sw t0, 0(sp)          # push the value to the stack
         lw t0, 0(sp)          # pop the value from the stack
-        addi sp, sp, 4  
+        addi sp, sp, 4
         lw t1, 0(sp)          # pop the address from the stack
         addi sp, sp, 4
         sw t0, 0(t1)          # save the loop variable in the local stack
     L6:
-        lw t0, -20(s0)        # load the value of 'i' 
+        lw t0, -20(s0)        # load the value of 'i'
         addi sp, sp, -4
         sw t0, 0(sp)          # push the value to the stack
         li t0, 13
@@ -619,12 +633,12 @@ riscv32-unknown-elf-gcc [generated RISC-V assembly file] io.c -o [output ELF fil
         addi sp, sp, 4
         add t0, t1, t0        # i + 1, always save the value in a certain register you choose
         addi sp, sp, -4
-        sw t0, 0(sp)          # push the value to the stack     
+        sw t0, 0(sp)          # push the value to the stack
         lw t0, 0(sp)          # pop the value from the stack
         addi sp, sp, 4
         lw t1, 0(sp)          # pop the address from the stack
         addi sp, sp, 4
-        sw t0, 0(t1)          # save the value to 'i' 
+        sw t0, 0(t1)          # save the value to 'i'
         j L6                  # jump back to loop condition
     L8:
     ```
@@ -668,7 +682,7 @@ print a;
 a := (b + c) * d;
 print a;
 
-if ( a <= 40 ) then  
+if ( a <= 40 ) then
 begin
     print a;
 end
@@ -685,7 +699,7 @@ begin
 end
 end do
 
-for i := 10 to 13 do 
+for i := 10 to 13 do
 begin
     print i;
 end
@@ -699,7 +713,7 @@ will be translated into the following `RISC-V` instructions.
 
 ```assembly
     .file "test1.p"
-    .option nopic 
+    .option nopic
 .comm a, 4, 4             # emit object 'a' to .bss section with size = 4, align = 4
 .section    .rodata       # emit rodata section
     .align 2
@@ -775,7 +789,7 @@ main:
     # c = 6
     addi t0, s0, -16
     addi sp, sp, -4
-    sw t0, 0(sp)          # push the address to the stack   
+    sw t0, 0(sp)          # push the address to the stack
     li t0, 6
     addi sp, sp, -4
     sw t0, 0(sp)          # push the value to the stack
@@ -786,7 +800,7 @@ main:
     sw t0, 0(t1)          # c = 6
     # read a
     la t0, a              # load the address of 'a'
-    addi sp, sp, -4 
+    addi sp, sp, -4
     sw t0, 0(sp)          # push the address to the stack
     jal ra, readInt       # call function 'readInt'
     lw t0, 0(sp)          # pop the address from the stack
@@ -834,7 +848,7 @@ main:
     la t0, a              # load the address of 'a'
     sw t0, 0(sp)          # push the address to the stack
     lw t0, -12(s0)        # load the value of 'b'
-    addi sp, sp, -4  
+    addi sp, sp, -4
     sw t0, 0(sp)          # push the value to the stack
     lw t0, -16(s0)        # load the value of 'c'
     addi sp, sp, -4
@@ -867,7 +881,7 @@ main:
     lw a0, 0(t0)
     jal ra, printInt
     # condition example
-    la t0, a    
+    la t0, a
     lw t1, 0(t0)          # load the value of 'a'
     mv t0, t1
     addi sp, sp, -4
@@ -899,7 +913,7 @@ L2:
     jal ra, printInt      # call function 'printInt'
 L3:
     # while loop example
-    lw t0, -12(s0)        # load the value of 'b' 
+    lw t0, -12(s0)        # load the value of 'b'
     addi sp, sp, -4
     sw t0, 0(sp)          # push the value to the stack
     li t0, 8
@@ -932,14 +946,14 @@ L4:
     addi sp, sp, 4
     add t0, t1, t0        # b + 1, always save the value in a certain register you choose
     addi sp, sp, -4
-    sw t0, 0(sp)          # push the value to the stack     
+    sw t0, 0(sp)          # push the value to the stack
     lw t0, 0(sp)          # pop the value from the stack
     addi sp, sp, 4
     lw t1, 0(sp)          # pop the address from the stack
     addi sp, sp, 4
-    sw t0, 0(t1)          # save the value to 'b' 
+    sw t0, 0(t1)          # save the value to 'b'
     j L3                  # jump back to loop condition
-L5: 
+L5:
     # for loop example
     addi t0, s0, -20
     addi sp, sp, -4
@@ -948,12 +962,12 @@ L5:
     addi sp, sp, -4
     sw t0, 0(sp)          # push the value to the stack
     lw t0, 0(sp)          # pop the value from the stack
-    addi sp, sp, 4  
+    addi sp, sp, 4
     lw t1, 0(sp)          # pop the address from the stack
     addi sp, sp, 4
     sw t0, 0(t1)          # save the loop variable in the local stack
 L6:
-    lw t0, -20(s0)        # load the value of 'i' 
+    lw t0, -20(s0)        # load the value of 'i'
     addi sp, sp, -4
     sw t0, 0(sp)          # push the value to the stack
     li t0, 13
@@ -986,12 +1000,12 @@ L7:
     addi sp, sp, 4
     add t0, t1, t0        # i + 1, always save the value in a certain register you choose
     addi sp, sp, -4
-    sw t0, 0(sp)          # push the value to the stack     
+    sw t0, 0(sp)          # push the value to the stack
     lw t0, 0(sp)          # pop the value from the stack
     addi sp, sp, 4
     lw t1, 0(sp)          # pop the address from the stack
     addi sp, sp, 4
-    sw t0, 0(t1)          # save the value to 'i' 
+    sw t0, 0(t1)          # save the value to 'i'
     j L6                  # jump back to loop condition
 L8:
     # in the function epilogue
@@ -1009,7 +1023,7 @@ L8:
 You need to generate `RISC-V` instructions for `boolean type`, `array type`, `string type`, and `real type` for the extra points. The code generation for additional types will be tested **with** declarations, statements and expressions. The following are some hints for the bonus.
 
 #### Boolean Type
-    
+
 Just treat the `true` and `false` as `1` and `0`.
 
 #### Array Type
@@ -1018,7 +1032,7 @@ For simplicity, you can pass the array variables by value.
 
 #### String Type
 
-There is no string concatenation in test cases, so you don't need to allocate dynamic memory for a string variable. 
+There is no string concatenation in test cases, so you don't need to allocate dynamic memory for a string variable.
 
  - Defining a local string variable 'st' will be translated into the following `RISC-V` instructions.
 
@@ -1126,6 +1140,11 @@ Total of 119 points.
 + Passing all the basic cases (60 pts)
 + Passing all the advance cases (35 pts)
 + Report (5 pts)
+  + 0: empty
+  + 1: bad
+  + 3: normal
+  + 4: good
+  + 5: excellent
 + Bonus (Total of 19 pts)
   + Code generation for boolean types (4 pts)
   + Code generation for array types (6 pts)
@@ -1141,7 +1160,7 @@ Total of 119 points.
 !!**Attention**!!
 
 If you're using a Mac, and you encounter problems when executing `./activate_docker.sh`. You can try commenting out or removing line 83 in `docker/activate_docker.py`:`'--privileged -v /dev/bus/usb:/dev/bus/usb',`. We're still resolving to find a way to mount in Docker on Mac. So if you're using a Mac, please just use the emulator to test your homework.
-  
+
 
 - Get Hw5 docker image: `make docker-pull`
 - Activate docker environment: `./activate_docker.sh`
@@ -1162,7 +1181,7 @@ Please use `student_` as the prefix of your own tests to prevent TAs from overri
 
 ### Simulator Commands
 
-The `RISC-V` simulator has been installed in the docker image. You may install it on your environment. The following commands show how to generate the executable and run the executable on the `RISC-V` simulator. 
+The `RISC-V` simulator has been installed in the docker image. You may install it on your environment. The following commands show how to generate the executable and run the executable on the `RISC-V` simulator.
 
  - Compile the generated `RISC-V` instructions to the `Executable and Linkable Format (ELF)` file.
 
@@ -1184,7 +1203,7 @@ We provide the [`Seeed Studio Sipeed Longan Nano`](https://www.seeedstudio.com/S
 
 1. Global variable
 2. Local variable
-3. Global constant 
+3. Global constant
 4. Expression
 5. Function definition and function invocation
 6. Function invocation in an expression
