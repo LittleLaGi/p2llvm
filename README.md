@@ -8,6 +8,9 @@ Due Date: **23:59, Jun 21, 2022**
 
 Your assignment is to generate `RISC-V instructions` for the **`P`** language based on the `AST` and `symbol table` that you have built in the previous assignments. The generated code will then be executed on a RISC-V simulator, called `Spike`.
 
+### The description video of homework:
+https://drive.google.com/drive/folders/1bxhnd03dAB2DbRrAsqgB13DjRHQMJVLW
+
 ---
 
 ## Table of Contents
