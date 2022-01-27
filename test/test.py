@@ -70,7 +70,7 @@ class Grader:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
-    def gen_riscv_code(self, case_type, case_id):
+    def gen_llvm_code(self, case_type, case_id):
         if case_type == "basic":
             test_case = "%s/%s/%s.p" % (self.basic_case_dir, "test-cases", self.basic_cases[case_id])
         elif case_type == "advance":
@@ -88,18 +88,18 @@ class Grader:
 
         proc.wait()
 
-    def compile_riscv_code(self, case_type, case_id):
+    def compile_llvm_code(self, case_type, case_id):
         if case_type == "basic":
-            test_case = "%s/%s.S" % (self.save_path, self.basic_cases[case_id])
+            test_case = "%s/%s.ll" % (self.save_path, self.basic_cases[case_id])
             executable_file = "%s/%s" % (self.executable_file_path, self.basic_cases[case_id])
         elif case_type == "advance":
-            test_case = "%s/%s.S" % (self.save_path, self.advance_cases[case_id])
+            test_case = "%s/%s.ll" % (self.save_path, self.advance_cases[case_id])
             executable_file = "%s/%s" % (self.executable_file_path, self.advance_cases[case_id])
         elif case_type == "bonus":
-            test_case = "%s/%s.S" % (self.save_path, self.bonus_cases[case_id])
+            test_case = "%s/%s.ll" % (self.save_path, self.bonus_cases[case_id])
             executable_file = "%s/%s" % (self.executable_file_path, self.bonus_cases[case_id])
 
-        clist = ["riscv32-unknown-elf-gcc", test_case, self.io_file, "-o", executable_file]
+        clist = ["clang", test_case, self.io_file, "-o", executable_file]
         cmd = " ".join(clist)
         try:
             proc = subprocess.Popen(cmd, shell=True)
@@ -109,7 +109,7 @@ class Grader:
 
         proc.wait()
 
-    def run_riscv_code(self, case_type, case_id):
+    def run_llvm_code(self, case_type, case_id):
         if case_type == "basic":
             output_file = "%s/%s" % (self.code_result_path, self.basic_cases[case_id])
             executable_file = "%s/%s" % (self.executable_file_path, self.basic_cases[case_id])
@@ -120,7 +120,7 @@ class Grader:
             output_file = "%s/%s" % (self.code_result_path, self.bonus_cases[case_id])
             executable_file = "%s/%s" % (self.executable_file_path, self.bonus_cases[case_id])
 
-        clist = ["echo", "123", "|", "spike", "--isa=RV32", "/risc-v/riscv32-unknown-elf/bin/pk", executable_file]
+        clist = ["echo", "123", "|", executable_file]
         cmd = " ".join(clist)
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -187,9 +187,9 @@ class Grader:
         return retcode == 0
     
     def test_sample_case(self, case_type, case_id):
-        self.gen_riscv_code(case_type, case_id)
-        self.compile_riscv_code(case_type, case_id)
-        self.run_riscv_code(case_type, case_id)
+        self.gen_llvm_code(case_type, case_id)
+        self.compile_llvm_code(case_type, case_id)
+        self.run_llvm_code(case_type, case_id)
 
         return self.compare_file_content(case_type, case_id)
 
@@ -241,8 +241,8 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--compiler", help="Your compiler to test.", 
                                     default="../src/compiler")
-    parser.add_argument("--save-path", help="Path that stores the output risc-v instructions of your compiler.", 
-                                        default="./output_riscv_code")
+    parser.add_argument("--save-path", help="Path that stores the output llvm instructions of your compiler.", 
+                                        default="./output_llvm_code")
     parser.add_argument("--executable-file-path", help="Path that stores the compiled executable files.", 
                                         default="./executable")
     parser.add_argument("--code-result-path", help="Path that stores the output content of your generated risc-v instructions.", 

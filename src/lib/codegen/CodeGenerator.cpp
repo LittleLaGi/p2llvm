@@ -24,7 +24,7 @@ CodeGenerator::CodeGenerator(const std::string source_file_name,
     }
     std::string output_file_path(
         real_path + "/" +
-        source_file_name.substr(slash_pos, dot_pos - slash_pos) + ".S");
+        source_file_name.substr(slash_pos, dot_pos - slash_pos) + ".ll");
     m_output_file.reset(fopen(output_file_path.c_str(), "w"));
     assert(m_output_file.get() && "Failed to open output file");
 }
@@ -40,10 +40,12 @@ void CodeGenerator::visit(ProgramNode &p_program) {
     // Generate RISC-V instructions for program header
     // clang-format off
     constexpr const char*const riscv_assembly_file_prologue =
-        "    .file \"%s\"\n"
-        "    .option nopic\n"
-        ".section    .text\n"
-        "    .align 2\n";
+        "source_filename = \"%s\"\n"
+        "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"\n"
+        "target triple = \"x86_64-pc-linux-gnu\"\n\n"
+        "define i32 @main() {\n"
+        "    ret i32 0\n"
+        "}\n";
     // clang-format on
     dumpInstructions(m_output_file.get(), riscv_assembly_file_prologue,
                      m_source_file_path.c_str());
