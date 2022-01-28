@@ -4,13 +4,56 @@
 #include "sema/SymbolTable.hpp"
 #include "visitor/AstNodeVisitor.hpp"
 
+#include <map>
 #include <memory>
+#include <stack>
+#include <utility>
+
+int fclose(FILE *);
 
 class CodeGenerator final : public AstNodeVisitor {
   private:
+    enum class CodegenContext : uint8_t {
+        kGlobal,
+        kLocal
+    };
+
+    struct FileDeleter {
+        void operator()(FILE *fp) const {
+            fclose(fp);
+        }
+    };
+
+  private:
+    union StackValue {
+      int d;
+      int reg; // llvm register
+      float f;
+      char *str;
+    };
+    std::stack<StackValue> m_value_stack;
+    enum class CurrentValueType {
+      INT,
+      REG,
+      FLOAT,
+      STR
+    };
+    std::stack<CurrentValueType> m_type_stack;
+
     const SymbolManager *m_symbol_manager_ptr;
     std::string m_source_file_path;
-    std::unique_ptr<FILE> m_output_file;
+    std::unique_ptr<FILE, FileDeleter> m_output_file;
+
+    std::stack<CodegenContext> m_context_stack;
+
+    size_t m_local_var_offset = 0;
+    std::map<const SymbolEntry *, size_t> m_local_var_offset_map;
+
+    bool m_ref_to_value = false;
+
+    size_t m_label_sequence = 1;
+    size_t m_comp_branch_true_label = 0;
+    size_t m_comp_branch_false_label = 0;
 
   public:
     ~CodeGenerator() = default;
@@ -35,6 +78,22 @@ class CodeGenerator final : public AstNodeVisitor {
     void visit(WhileNode &p_while) override;
     void visit(ForNode &p_for) override;
     void visit(ReturnNode &p_return) override;
+
+  private:
+    static bool isInGlobal(const std::stack<CodegenContext> &p_context_stack) {
+        return p_context_stack.top() == CodegenContext::kGlobal;
+    }
+    static bool isInLocal(const std::stack<CodegenContext> &p_context_stack) {
+        return p_context_stack.top() == CodegenContext::kLocal;
+    }
+    void
+    storeArgumentsToParameters(const FunctionNode::DeclNodes &p_parameters);
+
+    void pushIntToStack(int d);
+    void pushRegToStack(int reg);
+    void pushToFloatStack(float f);
+    void pushToStrStack(char *str);
+    std::pair<StackValue, CurrentValueType> popFromStack();
 };
 
 #endif
