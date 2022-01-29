@@ -146,10 +146,7 @@ void CodeGenerator::visit(VariableNode &p_variable) {
 }
 
 void CodeGenerator::visit(ConstantValueNode &p_constant_value) {
-    StackValue t;
-    t.d = p_constant_value.getConstantPtr()->integer();
-    m_value_stack.push(t);
-    m_type_stack.push(CurrentValueType::INT);
+    pushIntToStack(p_constant_value.getConstantPtr()->integer());
 }
 
 void CodeGenerator::visit(FunctionNode &p_function) {
@@ -196,16 +193,17 @@ void CodeGenerator::visit(PrintNode &p_print) {
     m_ref_to_value = true;
     p_print.visitChildNodes(*this);
 
-    assert(m_value_stack.size() && m_type_stack.size() &&
-            "There should be at least one value on both stacks!");
-
-    int reg = m_value_stack.top().reg;
-    m_value_stack.pop();
-    m_type_stack.pop();
-    emitInstructions(m_output_file.get(), "  %%%ld = call i32 (i8*, ...) @printf(i8* getelementptr inbounds"
-                                          " ([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32 %%%d)\n",
-                                          m_local_var_offset, reg);
-    m_local_var_offset += 1;
+    auto value_type = popFromStack();
+    CurrentValueType type = value_type.second;
+    if (type == CurrentValueType::REG) {
+        int reg = value_type.first.reg;
+        emitInstructions(m_output_file.get(), "  %%%ld = call i32 (i8*, ...) @printf(i8* getelementptr inbounds"
+                                            " ([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32 %%%d)\n",
+                                            m_local_var_offset, reg);
+        m_local_var_offset += 1;
+    }
+    else
+        assert(false && "Shouldn't reach here!");
 }
 
 void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
@@ -252,10 +250,7 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
         break;
     }
     
-    StackValue t;
-    t.reg = m_local_var_offset++;
-    m_value_stack.push(t);
-    m_type_stack.push(CurrentValueType::REG);
+    pushRegToStack(m_local_var_offset++);
 }
 
 void CodeGenerator::visit(UnaryOperatorNode &p_un_op) {
@@ -331,11 +326,8 @@ void CodeGenerator::visit(VariableReferenceNode &p_variable_ref) {
 
         emitInstructions(m_output_file.get(), "  %%%ld = load i32, i32* ",
                         m_local_var_offset);
-        StackValue t;
-        t.reg = m_local_var_offset;
-        m_value_stack.push(t);
-        m_type_stack.push(CurrentValueType::REG);
-        m_local_var_offset += 1;
+
+        pushRegToStack(m_local_var_offset++);
 
         if (search == m_local_var_offset_map.end()) {
             // global variable reference
@@ -373,24 +365,18 @@ void CodeGenerator::visit(AssignmentNode &p_assignment) {
         name << "%" << search->second;
         target << "%" << p_assignment.getLvalue().getName();
     }
-    
-    assert(m_value_stack.size() && m_type_stack.size() &&
-             "There should be at least one value on both stacks!");
 
-
-    CurrentValueType t = m_type_stack.top();
-    m_type_stack.pop();
-    if (t == CurrentValueType::INT) {
-        int val = m_value_stack.top().d;
-        m_value_stack.pop();
+    auto value_type = popFromStack();
+    CurrentValueType type = value_type.second;
+    if (type == CurrentValueType::INT) {
+        int val = value_type.first.d;
         emitInstructions(m_output_file.get(),
                         "  store i32 %d, i32* %s, align 4"
                         " ; store to %s\n",
                         val, name.str().c_str(), target.str().c_str());
     }
-    else if (t == CurrentValueType::REG) {
-        int reg = m_value_stack.top().reg;
-        m_value_stack.pop();
+    else if (type == CurrentValueType::REG) {
+        int reg = value_type.first.reg;
         emitInstructions(m_output_file.get(),
                         "  store i32 %%%d, i32* %s, align 4"
                         " ; store to %s\n",
@@ -553,22 +539,57 @@ void CodeGenerator::storeArgumentsToParameters(
 }
 
 void CodeGenerator::pushIntToStack(int d) {
-
+    StackValue value;
+    value.d = d;
+    m_value_stack.push(value);
+    m_type_stack.push(CurrentValueType::INT);
 }
 
 void CodeGenerator::pushRegToStack(int reg) {
-
+    StackValue value;
+    value.reg = reg;
+    m_value_stack.push(value);
+    m_type_stack.push(CurrentValueType::REG);
 }
 
 void CodeGenerator::pushToFloatStack(float f) {
-
+    StackValue value;
+    value.f = f;
+    m_value_stack.push(value);
+    m_type_stack.push(CurrentValueType::FLOAT);
 }
 
 void CodeGenerator::pushToStrStack(char *str) {
-
+    StackValue value;
+    value.str = str;
+    m_value_stack.push(value);
+    m_type_stack.push(CurrentValueType::STR);
 }
 
 std::pair<CodeGenerator::StackValue, CodeGenerator::CurrentValueType>
 CodeGenerator::popFromStack() {
-    
+    assert(m_value_stack.size() && m_type_stack.size() &&
+            "There should be at least one value on both stacks!");
+
+    CurrentValueType type = m_type_stack.top();
+    StackValue value;
+    if (type == CurrentValueType::INT) {
+        value.d = m_value_stack.top().d;
+    }
+    else if (type == CurrentValueType::REG) {
+        value.reg = m_value_stack.top().reg;
+    }
+    else if (type == CurrentValueType::FLOAT) {
+        value.f = m_value_stack.top().f;
+    }
+    else if (type == CurrentValueType::STR) {
+        value.str = m_value_stack.top().str;
+    }
+    else
+        assert (false && "Shouldn't reach here!");
+
+    m_type_stack.pop();
+    m_value_stack.pop();
+
+    return {value, type};
 }
