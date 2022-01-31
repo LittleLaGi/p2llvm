@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <sstream>
+#include <iostream>
 
 CodeGenerator::CodeGenerator(const std::string source_file_name,
                              const std::string save_path,
@@ -154,23 +155,41 @@ void CodeGenerator::visit(FunctionNode &p_function) {
         p_function.getSymbolTable());
     m_context_stack.push(CodegenContext::kLocal);
 
-    // emitInstructions(m_output_file.get(), kFixedFunctionPrologue,
-    //                  p_function.getNameCString(), p_function.getNameCString(),
-    //                  p_function.getNameCString());
+    m_local_var_offset = 0;
 
-    // start from 8 since 0-4, 4-8 are for return addr, last stack addr
-    m_local_var_offset = 1;
+    std::string return_type = "i32";
+    std::stringstream function_head;
+    function_head << "\ndefine " << return_type << " @" << p_function.getName() << "(";
+    
+    // support one decl node in function parameter list for now
+    auto &variables = p_function.getParameters()[0]->getVariables();
+    for (auto iter = variables.begin(); iter != variables.end(); ++iter) {
+        function_head << "i32 %" << m_local_var_offset++;
+        if (iter + 1 != variables.end())
+            function_head << ", ";
+    }
+    function_head << ") {";
+
+    emitInstructions(m_output_file.get(), "%s\n", function_head.str().c_str());
+
+    m_local_var_offset += 1; // reserve one value for entry block
 
     auto visit_ast_node = [&](auto &ast_node) { ast_node->accept(*this); };
     for_each(p_function.getParameters().begin(),
              p_function.getParameters().end(), visit_ast_node);
 
-    storeArgumentsToParameters(p_function.getParameters());
+    // store parameter's value to alloca variable
+    for (int i = 0; i < variables.size(); ++i) {
+        int alloca_var_number = m_local_var_offset - i - 1;
+        int param_number = alloca_var_number - variables.size() - 1;
+        emitInstructions(m_output_file.get(),
+                         "  store i32 %%%d, i32* %%%d, align 4\n",
+                         param_number, alloca_var_number);
+    }
+
+    // storeArgumentsToParameters(p_function.getParameters());
 
     p_function.visitBodyChildNodes(*this);
-
-    // emitInstructions(m_output_file.get(), kFixedFunctionEpilogue,
-    //                  p_function.getNameCString(), p_function.getNameCString());
 
     m_context_stack.pop();
     m_symbol_manager_ptr->removeSymbolsFromHashTable(
@@ -272,47 +291,35 @@ void CodeGenerator::visit(UnaryOperatorNode &p_un_op) {
 }
 
 void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
-    constexpr size_t kNumOfArgumentRegister = 8;
     const auto &arguments = p_func_invocation.getArguments();
-
     m_ref_to_value = true;
     auto visit_ast_node = [&](auto &ast_node) { ast_node->accept(*this); };
-    if (arguments.size() > kNumOfArgumentRegister) {
-        // [0, kNumOfArgumentRegister)
-        for_each(arguments.begin(),
-                 std::next(arguments.begin(), kNumOfArgumentRegister),
-                 visit_ast_node);
-    } else {
-        for_each(arguments.begin(), arguments.end(), visit_ast_node);
-    }
+    for_each(arguments.begin(), arguments.end(), visit_ast_node);
 
-    // RISC-V has a0-a7 for passing arguments
-    size_t num_of_a_reg = std::min(kNumOfArgumentRegister, arguments.size());
-    for (size_t i = 0; i < num_of_a_reg; ++i) {
-        // emitInstructions(m_output_file.get(),
-        //                  "    lw a%u, 0(sp)\n"
-        //                  "    addi sp, sp, 4\n",
-        //                  num_of_a_reg - i - 1);
-    }
+    std::vector<std::pair<StackValue, CurrentValueType>> args(arguments.size());
+    for (size_t i = 0; i < arguments.size(); ++i)
+        args[arguments.size() - 1 - i] = popFromStack();
+    pushRegToStack(m_local_var_offset);
+    
+    std::stringstream func;
+    func << "%" << m_local_var_offset++ << " = call i32 @" 
+        << p_func_invocation.getNameCString() << "(";
+    for (size_t i = 0; i < arguments.size(); ++i) {
+        auto value = args[i].first;
+        auto type = args[i].second;
+        if (type == CurrentValueType::INT) 
+            func << "i32 " << value.d;
+        else if (type == CurrentValueType::REG)
+            func << "i32 %" << value.reg;
+        else
+            assert(false && "Should not reach here!");
 
-    // [kNumOfArgumentRegister, end)
-    if (arguments.size() > kNumOfArgumentRegister) {
-        for_each(std::next(arguments.begin(), kNumOfArgumentRegister),
-                 arguments.end(), visit_ast_node);
-    }
+        if (i != arguments.size() - 1)
+            func << ", ";
+    } 
+    func << ")";
 
-    // emitInstructions(m_output_file.get(), "    jal ra, %s\n",
-    //                  p_func_invocation.getNameCString());
-
-    // restore the stack if necessary
-    if (arguments.size() > kNumOfArgumentRegister) {
-        // emitInstructions(m_output_file.get(), "    addi sp, sp, %u\n",
-        //                  4 * (arguments.size() - kNumOfArgumentRegister));
-    }
-
-    // emitInstructions(m_output_file.get(), "    mv t0, a0\n"
-    //                                       "    addi sp, sp, -4\n"
-    //                                       "    sw t0, 0(sp)\n");
+    emitInstructions(m_output_file.get(), "  %s\n", func.str().c_str());
 }
 
 void CodeGenerator::visit(VariableReferenceNode &p_variable_ref) {
@@ -502,9 +509,18 @@ void CodeGenerator::visit(ReturnNode &p_return) {
     m_ref_to_value = true;
     p_return.visitChildNodes(*this);
 
-    // emitInstructions(m_output_file.get(), "    lw t0, 0(sp)\n"
-    //                                       "    addi sp, sp, 4\n"
-    //                                       "    mv a0, t0\n");
+    std::stringstream function_end;
+    function_end << "  ret ";
+
+    auto value_type = popFromStack();
+    CurrentValueType type = value_type.second;
+    if (type == CurrentValueType::REG) {
+        function_end << "i32 %" << value_type.first.reg << "\n}";
+    }
+    else
+        assert(false && "Should not reach here!");
+
+    emitInstructions(m_output_file.get(), "%s\n", function_end.str().c_str());
 }
 
 
