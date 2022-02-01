@@ -231,10 +231,15 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
     assert(m_value_stack.size() > 1 && m_type_stack.size() > 1 &&
             "There should be at least two value on both stacks!");
 
-    int reg1 = m_value_stack.top().reg;
-    m_value_stack.pop();
-    int reg2 = m_value_stack.top().reg;
-    m_value_stack.pop();
+    auto value_type2 = popFromStack();
+    auto value_type1 = popFromStack();
+    int int1 = value_type1.first.d;
+    int int2 = value_type2.first.d;
+    int reg1 = value_type1.first.reg;
+    int reg2 = value_type2.first.reg;
+
+    auto type1 = value_type1.second;
+    auto type2 = value_type2.second;
 
     switch (p_bin_op.getOp()) {
     case Operator::kMultiplyOp:
@@ -257,10 +262,14 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
     case Operator::kLessOrEqualOp:
         break;
     case Operator::kGreaterOp:
+        emitInstructions(m_output_file.get(), "  %%%d = icmp sgt i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
         break;
     case Operator::kGreaterOrEqualOp:
         break;
     case Operator::kEqualOp:
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = icmp eq i32 %%%d, %d\n",
+                                m_local_var_offset, reg1, int2);
         break;
     case Operator::kNotEqualOp:
         break;
@@ -406,32 +415,57 @@ void CodeGenerator::visit(ReadNode &p_read) {
 }
 
 void CodeGenerator::visit(IfNode &p_if) {
-    const auto if_body_label = m_label_sequence;
-    ++m_label_sequence;
+    // const auto if_body_label = m_label_sequence;
+    // ++m_label_sequence;
 
     const auto *else_body_ptr = p_if.getElseBodyPtr();
-    const size_t else_body_label = (else_body_ptr) ? m_label_sequence++ : 0;
+    // const size_t else_body_label = (else_body_ptr) ? m_label_sequence++ : 0;
 
-    const auto out_label = m_label_sequence;
-    ++m_label_sequence;
+    // const auto out_label = m_label_sequence;
+    // ++m_label_sequence;
 
-    m_comp_branch_true_label = if_body_label;
-    m_comp_branch_false_label = (else_body_ptr) ? else_body_label : out_label;
-    m_ref_to_value = true;
+    // m_comp_branch_true_label = if_body_label;
+    // m_comp_branch_false_label = (else_body_ptr) ? else_body_label : out_label;
+    // m_ref_to_value = true;
     const_cast<ExpressionNode &>(p_if.getCondition()).accept(*this);
 
-    //emitInstructions(m_output_file.get(), "L%u:\n", if_body_label);
+    auto value_type = popFromStack();
+    auto value = value_type.first.reg;
+    assert(value_type.second == CurrentValueType::REG && "Must be reg type!");
+
+    emitInstructions(m_output_file.get(), "  ; if-else \n");
+    fpos_t pos;
+    emitInstructions(m_output_file.get(), "  br i1 %%%d, label %%%d, label %%", value, m_local_var_offset);
+    fgetpos(m_output_file.get(), &pos);
+    emitInstructions(m_output_file.get(), "               \n"); // a hack to deal with large label values
+
+    emitInstructions(m_output_file.get(), "%d:  ; if\n", m_local_var_offset++);
     const_cast<CompoundStatementNode &>(p_if.getIfBody()).accept(*this);
+    emitInstructions(m_output_file.get(), "  br label %%");
+    fpos_t cur_pos;
+    fgetpos(m_output_file.get(), &cur_pos);
+    fsetpos(m_output_file.get(), &pos);
+    emitInstructions(m_output_file.get(), "%d", m_local_var_offset);
+    fsetpos(m_output_file.get(), &cur_pos);
+    pos = cur_pos;
+    emitInstructions(m_output_file.get(), "               \n"); // a hack to deal with large label values
 
     if (else_body_ptr) {
+        emitInstructions(m_output_file.get(), "%d:  ; else\n", m_local_var_offset++);
         // TODO: cannot handle nested compound statements
         // emitInstructions(m_output_file.get(),
         //                  "    j L%u\n"
         //                  "L%u:\n",
         //                  out_label, else_body_label);
         const_cast<CompoundStatementNode *>(else_body_ptr)->accept(*this);
+        emitInstructions(m_output_file.get(), "  br label %%%d\n", m_local_var_offset);
+        fgetpos(m_output_file.get(), &cur_pos);
+        fsetpos(m_output_file.get(), &pos);
+        emitInstructions(m_output_file.get(), "%d", m_local_var_offset);
+        fsetpos(m_output_file.get(), &cur_pos);
+        emitInstructions(m_output_file.get(), "%d:\n", m_local_var_offset++);
     }
-    //emitInstructions(m_output_file.get(), "L%u:\n", out_label);
+    
 }
 
 void CodeGenerator::visit(WhileNode &p_while) {
