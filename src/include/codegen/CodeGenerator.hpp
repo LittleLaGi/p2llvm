@@ -29,14 +29,16 @@ class CodeGenerator final : public AstNodeVisitor {
       int d;
       int reg; // llvm register
       float f;
-      char *str;
+      const char *str;
+      const char *global_var;
     };
     std::stack<StackValue> m_value_stack;
     enum class CurrentValueType {
       INT,
       REG,
       FLOAT,
-      STR
+      STR,
+      GLOBAL
     };
     std::stack<CurrentValueType> m_type_stack;
 
@@ -86,13 +88,14 @@ class CodeGenerator final : public AstNodeVisitor {
     static bool isInLocal(const std::stack<CodegenContext> &p_context_stack) {
         return p_context_stack.top() == CodegenContext::kLocal;
     }
-    void
-    storeArgumentsToParameters(const FunctionNode::DeclNodes &p_parameters);
+    // void
+    // storeArgumentsToParameters(const FunctionNode::DeclNodes &p_parameters);
 
     void pushIntToStack(int d);
     void pushRegToStack(int reg);
-    void pushToFloatStack(float f);
-    void pushToStrStack(char *str);
+    void pushFloatToStack(float f);
+    void pushStrToStack(const char *str);
+    void pushGlobalVarToStack(const char *global_var);
     std::pair<StackValue, CurrentValueType> popFromStack();
 };
 

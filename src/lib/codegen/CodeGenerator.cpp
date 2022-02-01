@@ -39,24 +39,6 @@ static void emitInstructions(FILE *p_out_file, const char *format, ...) {
     va_end(args);
 }
 
-// clang-format off
-// static constexpr const char*const kFixedFunctionPrologue =
-//     "    .globl %s\n"
-//     "    .type %s, @function\n"
-//     "%s:\n"
-//     "    addi sp, sp, -128\n"
-//     "    sw ra, 124(sp)\n"
-//     "    sw s0, 120(sp)\n"
-//     "    addi s0, sp, 128\n";
-
-// static constexpr const char*const kFixedFunctionEpilogue =
-//     "    lw ra, 124(sp)\n"
-//     "    lw s0, 120(sp)\n"
-//     "    addi sp, sp, 128\n"
-//     "    jr ra\n"
-//     "    .size %s, .-%s\n";
-// clang-format on
-
 void CodeGenerator::visit(ProgramNode &p_program) {
     // Generate RISC-V instructions for program header
     // clang-format off
@@ -64,7 +46,8 @@ void CodeGenerator::visit(ProgramNode &p_program) {
         "source_filename = \"%s\"\n"
         "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"\n"
         "target triple = \"x86_64-pc-linux-gnu\"\n\n"
-        "declare i32 @printf(i8*, ...)\n\n"
+        "declare i32 @printf(i8*, ...)\n"
+        "declare i32 @__isoc99_scanf(i8*, ...)\n\n"
         "@.str = private unnamed_addr constant [4 x i8] c\"%%d\\0A\\00\", align 1\n";
 
     // clang-format on
@@ -343,12 +326,11 @@ void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
 void CodeGenerator::visit(VariableReferenceNode &p_variable_ref) {
     // Haven't supported array reference
     
-    // dereference to get the value if needed
-    if (m_ref_to_value) {
-        const auto *entry_ptr =
+    const auto *entry_ptr =
             m_symbol_manager_ptr->lookup(p_variable_ref.getName());
         auto search = m_local_var_offset_map.find(entry_ptr);
-
+    // dereference to get the value if needed
+    if (m_ref_to_value) {
         emitInstructions(m_output_file.get(), "  %%%ld = load i32, i32* ",
                         m_local_var_offset);
 
@@ -364,10 +346,12 @@ void CodeGenerator::visit(VariableReferenceNode &p_variable_ref) {
                             search->second);
         }
     }
-
-    // push onto stack
-    // emitInstructions(m_output_file.get(), "    addi sp, sp, -4\n"
-    //                                       "    sw t0, 0(sp)\n");
+    else {  // get the reg
+        if (search == m_local_var_offset_map.end()) // global variable reference
+            pushGlobalVarToStack(p_variable_ref.getNameCString());
+        else // local variable reference
+            pushRegToStack(search->second);
+    }
 }
 
 void CodeGenerator::visit(AssignmentNode &p_assignment) {
@@ -414,13 +398,13 @@ void CodeGenerator::visit(AssignmentNode &p_assignment) {
 void CodeGenerator::visit(ReadNode &p_read) {
     m_ref_to_value = false; 
     p_read.visitChildNodes(*this);
-    
-    // emitInstructions(
-    //     m_output_file.get(),
-    //     "    jal ra, readInt\n"
-    //     "    lw t0, 0(sp)\n"
-    //     "    addi sp, sp, 4\n"
-    //     "    sw a0, 0(t0)\n");
+    auto value_type = popFromStack();
+    assert(value_type.second == CurrentValueType::GLOBAL && "Should be a global variable type!");
+    auto var = value_type.first.global_var;
+    emitInstructions(m_output_file.get(), 
+                    "  %%%d = call i32 (i8*, ...) @__isoc99_scanf(i8* getelementptr inbounds "
+                    "([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32* @%s)\n",
+                    m_local_var_offset++, var);
 }
 
 void CodeGenerator::visit(IfNode &p_if) {
@@ -560,34 +544,6 @@ void CodeGenerator::visit(ReturnNode &p_return) {
 
 /* Utility functions */
 
-void CodeGenerator::storeArgumentsToParameters(
-    const FunctionNode::DeclNodes &p_parameters) {
-    constexpr size_t kNumOfArgumentRegister = 8;
-    size_t index = 0;
-
-    for (const auto &parameter : p_parameters) {
-        for (const auto &var_node_ptr : parameter->getVariables()) {
-            const auto *entry_ptr =
-                m_symbol_manager_ptr->lookup(var_node_ptr->getName());
-            auto search = m_local_var_offset_map.find(entry_ptr);
-            assert(search != m_local_var_offset_map.end() &&
-                   "Should have been defined before use");
-
-            if (index < kNumOfArgumentRegister) {
-                // emitInstructions(m_output_file.get(), "    sw a%u, -%u(s0)\n",
-                //                  index, search->second);
-            } else {
-                // emitInstructions(m_output_file.get(),
-                //                  "    lw t0, %u(s0)\n"
-                //                  "    sw t0, -%u(s0)\n",
-                //                  4 * (index - kNumOfArgumentRegister),
-                //                  search->second);
-            }
-            ++index;
-        }
-    }
-}
-
 void CodeGenerator::pushIntToStack(int d) {
     StackValue value;
     value.d = d;
@@ -602,18 +558,25 @@ void CodeGenerator::pushRegToStack(int reg) {
     m_type_stack.push(CurrentValueType::REG);
 }
 
-void CodeGenerator::pushToFloatStack(float f) {
+void CodeGenerator::pushFloatToStack(float f) {
     StackValue value;
     value.f = f;
     m_value_stack.push(value);
     m_type_stack.push(CurrentValueType::FLOAT);
 }
 
-void CodeGenerator::pushToStrStack(char *str) {
+void CodeGenerator::pushStrToStack(const char *str) {
     StackValue value;
     value.str = str;
     m_value_stack.push(value);
     m_type_stack.push(CurrentValueType::STR);
+}
+
+void CodeGenerator::pushGlobalVarToStack(const char *global_var) {
+    StackValue value;
+    value.str = global_var;
+    m_value_stack.push(value);
+    m_type_stack.push(CurrentValueType::GLOBAL);
 }
 
 std::pair<CodeGenerator::StackValue, CodeGenerator::CurrentValueType>
@@ -634,6 +597,9 @@ CodeGenerator::popFromStack() {
     }
     else if (type == CurrentValueType::STR) {
         value.str = m_value_stack.top().str;
+    }
+    else if (type == CurrentValueType::GLOBAL) {
+        value.global_var = m_value_stack.top().global_var;
     }
     else
         assert (false && "Shouldn't reach here!");
