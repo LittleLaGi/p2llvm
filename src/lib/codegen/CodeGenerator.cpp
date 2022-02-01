@@ -252,14 +252,23 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
         //emitInstructions(m_output_file.get(), "    rem t0, t1, t0\n");
         break;
     case Operator::kPlusOp:
-        emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        else if (type1 == CurrentValueType::REG && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %d, %d\n", m_local_var_offset, int1, int2);
+        else
+            assert(false && "Not supported!\n");
         break;
     case Operator::kMinusOp:
         //emitInstructions(m_output_file.get(), "    sub t0, t1, t0\n");
         break;
     case Operator::kLessOp:
+        emitInstructions(m_output_file.get(), "  %%%d = icmp slt i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
         break;
     case Operator::kLessOrEqualOp:
+        emitInstructions(m_output_file.get(), "  %%%d = icmp sle i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
         break;
     case Operator::kGreaterOp:
         emitInstructions(m_output_file.get(), "  %%%d = icmp sgt i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
@@ -415,18 +424,8 @@ void CodeGenerator::visit(ReadNode &p_read) {
 }
 
 void CodeGenerator::visit(IfNode &p_if) {
-    // const auto if_body_label = m_label_sequence;
-    // ++m_label_sequence;
-
+    // TODO: cannot handle nested compound statements
     const auto *else_body_ptr = p_if.getElseBodyPtr();
-    // const size_t else_body_label = (else_body_ptr) ? m_label_sequence++ : 0;
-
-    // const auto out_label = m_label_sequence;
-    // ++m_label_sequence;
-
-    // m_comp_branch_true_label = if_body_label;
-    // m_comp_branch_false_label = (else_body_ptr) ? else_body_label : out_label;
-    // m_ref_to_value = true;
     const_cast<ExpressionNode &>(p_if.getCondition()).accept(*this);
 
     auto value_type = popFromStack();
@@ -452,11 +451,6 @@ void CodeGenerator::visit(IfNode &p_if) {
 
     if (else_body_ptr) {
         emitInstructions(m_output_file.get(), "%d:  ; else\n", m_local_var_offset++);
-        // TODO: cannot handle nested compound statements
-        // emitInstructions(m_output_file.get(),
-        //                  "    j L%u\n"
-        //                  "L%u:\n",
-        //                  out_label, else_body_label);
         const_cast<CompoundStatementNode *>(else_body_ptr)->accept(*this);
         emitInstructions(m_output_file.get(), "  br label %%%d\n", m_local_var_offset);
         fgetpos(m_output_file.get(), &cur_pos);
@@ -465,28 +459,35 @@ void CodeGenerator::visit(IfNode &p_if) {
         fsetpos(m_output_file.get(), &cur_pos);
         emitInstructions(m_output_file.get(), "%d:\n", m_local_var_offset++);
     }
-    
 }
 
 void CodeGenerator::visit(WhileNode &p_while) {
-    const auto while_head_label = m_label_sequence;
-    const auto while_body_label = m_label_sequence + 1;
-    const auto while_out_label = m_label_sequence + 2;
-    m_label_sequence += 3;
-
-    //emitInstructions(m_output_file.get(), "L%u:\n", while_head_label);
-    m_comp_branch_true_label = while_body_label;
-    m_comp_branch_false_label = while_out_label;
+    // TODO: cannot handle nested compound statements
+    int head_label = m_local_var_offset;
+    emitInstructions(m_output_file.get(), "  br label %%%d\n", head_label);
     m_ref_to_value = true;
+    emitInstructions(m_output_file.get(), "%d:  ; while head\n", m_local_var_offset++);
     const_cast<ExpressionNode &>(p_while.getCondition()).accept(*this);
 
-    //emitInstructions(m_output_file.get(), "L%u:\n", while_body_label);
+    auto value_type = popFromStack();
+    auto value = value_type.first.reg;
+    assert(value_type.second == CurrentValueType::REG && "Must be reg type!");
+    
+    fpos_t pos;
+    emitInstructions(m_output_file.get(), "  br i1 %%%d, label %%%d, label %%", value, m_local_var_offset);
+    fgetpos(m_output_file.get(), &pos);
+    emitInstructions(m_output_file.get(), "               \n"); // a hack to deal with large label values
+
+    emitInstructions(m_output_file.get(), "%d:  ; while body\n", m_local_var_offset++);
     const_cast<CompoundStatementNode &>(p_while.getBody()).accept(*this);
-    // TODO: cannot handle nested compound statements
-    // emitInstructions(m_output_file.get(),
-    //                  "    j L%u\n"
-    //                  "L%u:\n",
-    //                  while_head_label, while_out_label);
+    emitInstructions(m_output_file.get(), "  br label %%%d\n", head_label);
+
+    emitInstructions(m_output_file.get(), "%d:\n", m_local_var_offset);
+    fpos_t cur_pos;
+    fgetpos(m_output_file.get(), &cur_pos);
+    fsetpos(m_output_file.get(), &pos);
+    emitInstructions(m_output_file.get(), "%d", m_local_var_offset++);
+    fsetpos(m_output_file.get(), &cur_pos);
 }
 
 void CodeGenerator::visit(ForNode &p_for) {
@@ -494,46 +495,45 @@ void CodeGenerator::visit(ForNode &p_for) {
         p_for.getSymbolTable());
     m_context_stack.push(CodegenContext::kLocal);
 
+    emitInstructions(m_output_file.get(), "  ; for init\n");
     const_cast<DeclNode &>(p_for.getLoopVarDecl()).accept(*this);
     const_cast<AssignmentNode &>(p_for.getLoopVarInitStmt()).accept(*this);
-
-    const auto for_head_label = m_label_sequence;
-    const auto for_body_label = m_label_sequence + 1;
-    const auto for_out_label = m_label_sequence + 2;
-    m_label_sequence += 3;
-
-    //emitInstructions(m_output_file.get(), "L%u:\n", for_head_label);
-
     // hand-written comparison
     const auto *entry_ptr =
         m_symbol_manager_ptr->lookup(p_for.getLoopVarName());
     auto search = m_local_var_offset_map.find(entry_ptr);
-    assert(search != m_local_var_offset_map.end() &&
-           "Should have been defined before use");
-    // emitInstructions(m_output_file.get(),
-    //                  "    lw t1, -%u(s0)\n"
-    //                  "    li t0, %u\n"
-    //                  "    blt t1, t0, L%u\n"
-    //                  "    j L%u\n",
-    //                  search->second,
-    //                  p_for.getUpperBound().getConstantPtr()->integer(),
-    //                  for_body_label, for_out_label);
+    assert(search != m_local_var_offset_map.end() && "Should have been defined before use");
 
-    //emitInstructions(m_output_file.get(), "L%u:\n", for_body_label);
+    int head_label = m_local_var_offset;
+    emitInstructions(m_output_file.get(), "  br label %%%d\n", head_label);
+    emitInstructions(m_output_file.get(), "%d:  ; for head\n", m_local_var_offset++);
+    int loop_var = search->second;
+    emitInstructions(m_output_file.get(), "  %%%d = load i32, i32* %%%d, align 4\n",
+                        m_local_var_offset++, loop_var);
+    emitInstructions(m_output_file.get(), "  %%%d = icmp slt i32 %%%d, %d\n",
+                        m_local_var_offset, m_local_var_offset - 1, p_for.getUpperBound().getConstantPtr()->integer());
+    m_local_var_offset += 1;
+    emitInstructions(m_output_file.get(), "  br i1 %%%d, label %%%d, label %%", 
+                        m_local_var_offset - 1, m_local_var_offset);
+    fpos_t pos;
+    fgetpos(m_output_file.get(), &pos);
+    emitInstructions(m_output_file.get(), "               \n"); // a hack to deal with large label values
+
+    emitInstructions(m_output_file.get(), "%d:  ; for body\n", m_local_var_offset++);
     const_cast<CompoundStatementNode &>(p_for.getBody()).accept(*this);
+    emitInstructions(m_output_file.get(), "  %%%d = load i32, i32* %%%d, align 4\n",
+                        m_local_var_offset++, loop_var);
+    emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %%%d, 1\n", m_local_var_offset, m_local_var_offset - 1);
+    m_local_var_offset += 1;
+    emitInstructions(m_output_file.get(), "  store i32 %%%d, i32* %%%d, align 4\n", m_local_var_offset - 1, loop_var);
+    emitInstructions(m_output_file.get(), "  br label %%%d\n", head_label);
 
-    // loop_var += 1 & jump back to head for condition check
-    // emitInstructions(m_output_file.get(),
-    //                  "    lw t0, -%u(s0)\n"
-    //                  "    li t1, 1\n"
-    //                  "    add t0, t0, t1\n"
-    //                  "    sw t0, -%u(s0)\n",
-    //                  search->second, search->second);
-    // TODO: cannot handle nested compound statements
-    // emitInstructions(m_output_file.get(),
-    //                  "    j L%u\n"
-    //                  "L%u:\n",
-    //                  for_head_label, for_out_label);
+    fpos_t cur_pos;
+    fgetpos(m_output_file.get(), &cur_pos);
+    fsetpos(m_output_file.get(), &pos);
+    emitInstructions(m_output_file.get(), "%d", m_local_var_offset);
+    fsetpos(m_output_file.get(), &cur_pos);
+    emitInstructions(m_output_file.get(), "%d:\n", m_local_var_offset++);
 
     m_context_stack.pop();
     m_symbol_manager_ptr->removeSymbolsFromHashTable(p_for.getSymbolTable());
