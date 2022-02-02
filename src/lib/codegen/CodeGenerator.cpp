@@ -75,7 +75,7 @@ void CodeGenerator::visit(ProgramNode &p_program) {
 
     constexpr const char*const llvm_ir_main_epilogue =
         "\n  ret i32 0\n"
-        "}\n";
+        "}";
     emitInstructions(m_output_file.get(), llvm_ir_main_epilogue,
                      m_source_file_path.c_str());
 
@@ -170,9 +170,8 @@ void CodeGenerator::visit(FunctionNode &p_function) {
                          param_number, alloca_var_number);
     }
 
-    // storeArgumentsToParameters(p_function.getParameters());
-
     p_function.visitBodyChildNodes(*this);
+    emitInstructions(m_output_file.get(), "}\n");
 
     m_context_stack.pop();
     m_symbol_manager_ptr->removeSymbolsFromHashTable(
@@ -226,26 +225,56 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
 
     switch (p_bin_op.getOp()) {
     case Operator::kMultiplyOp:
-        emitInstructions(m_output_file.get(), "  %%%d = mul nsw i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = mul nsw i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        else if (type1 == CurrentValueType::REG && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = mul nsw i32 %%%d, %d\n", m_local_var_offset, int1, int2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = mul nsw i32 %d, %%%d\n", m_local_var_offset, int1, int2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = mul nsw i32 %d, %d\n", m_local_var_offset, int1, int2);
+        else
+            assert(false && "Not supported!\n");
         break;
     case Operator::kDivideOp:
-        //emitInstructions(m_output_file.get(), "    div t0, t1, t0\n");
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = sdiv exact i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = sdiv exact i32 %d, %d\n", m_local_var_offset, int1, int2);
+        else
+            assert(false && "Not supported!\n");
         break;
     case Operator::kModOp:
-        //emitInstructions(m_output_file.get(), "    rem t0, t1, t0\n");
+         if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = srem i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = srem i32 %d, %d\n", m_local_var_offset, int1, int2);
+        else
+            assert(false && "Not supported!\n");
         break;
     case Operator::kPlusOp:
         if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
             emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
         else if (type1 == CurrentValueType::REG && type2 == CurrentValueType::INT)
             emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %d, %%%d\n", m_local_var_offset, int1, int2);
         else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::INT)
             emitInstructions(m_output_file.get(), "  %%%d = add nsw i32 %d, %d\n", m_local_var_offset, int1, int2);
         else
             assert(false && "Not supported!\n");
         break;
     case Operator::kMinusOp:
-        //emitInstructions(m_output_file.get(), "    sub t0, t1, t0\n");
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = sub nsw i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        else if (type1 == CurrentValueType::REG && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = sub nsw i32 %%%d, %d\n", m_local_var_offset, int1, int2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = sub nsw i32 %d, %%%d\n", m_local_var_offset, int1, int2);
+        else if (type1 == CurrentValueType::INT && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = sub nsw i32 %d, %d\n", m_local_var_offset, int1, int2);
+        else
+            assert(false && "Not supported!\n");
         break;
     case Operator::kLessOp:
         emitInstructions(m_output_file.get(), "  %%%d = icmp slt i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
@@ -254,7 +283,10 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
         emitInstructions(m_output_file.get(), "  %%%d = icmp sle i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
         break;
     case Operator::kGreaterOp:
-        emitInstructions(m_output_file.get(), "  %%%d = icmp sgt i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = icmp sgt i32 %%%d, %d\n", m_local_var_offset, reg1, int2);
+        else if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = icmp sgt i32 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
         break;
     case Operator::kGreaterOrEqualOp:
         break;
@@ -276,19 +308,23 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
 void CodeGenerator::visit(UnaryOperatorNode &p_un_op) {
     p_un_op.visitChildNodes(*this);
 
-    // emitInstructions(m_output_file.get(), "    lw t0, 0(sp)\n"
-    //                                       "    addi sp, sp, 4\n");
+    auto value_type = popFromStack();
+    auto type = value_type.second;
+    auto value = value_type.first;
 
     switch (p_un_op.getOp()) {
     case Operator::kNegOp:
-        //emitInstructions(m_output_file.get(), "    sub t0, zero, t0\n");
+        if (type == CurrentValueType::INT)
+            emitInstructions(m_output_file.get(), "  %%%d = sub nsw i32 0, %d\n", m_local_var_offset, value.d);
+        else
+            assert(false && "Should not reach here!");
         break;
     default:
         assert(false && "unsupported unary operator");
         return;
     }
-    // emitInstructions(m_output_file.get(), "    addi sp, sp, -4\n"
-    //                                       "    sw t0, 0(sp)\n");
+    
+    pushRegToStack(m_local_var_offset++);
 }
 
 void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
@@ -410,6 +446,7 @@ void CodeGenerator::visit(ReadNode &p_read) {
 void CodeGenerator::visit(IfNode &p_if) {
     // TODO: cannot handle nested compound statements
     const auto *else_body_ptr = p_if.getElseBodyPtr();
+    m_ref_to_value = true;
     const_cast<ExpressionNode &>(p_if.getCondition()).accept(*this);
 
     auto value_type = popFromStack();
@@ -422,9 +459,11 @@ void CodeGenerator::visit(IfNode &p_if) {
     fgetpos(m_output_file.get(), &pos);
     emitInstructions(m_output_file.get(), "               \n"); // a hack to deal with large label values
 
+    has_ret = false;
     emitInstructions(m_output_file.get(), "%d:  ; if\n", m_local_var_offset++);
     const_cast<CompoundStatementNode &>(p_if.getIfBody()).accept(*this);
-    emitInstructions(m_output_file.get(), "  br label %%");
+    if (!has_ret)
+        emitInstructions(m_output_file.get(), "  br label %%");
     fpos_t cur_pos;
     fgetpos(m_output_file.get(), &cur_pos);
     fsetpos(m_output_file.get(), &pos);
@@ -432,16 +471,21 @@ void CodeGenerator::visit(IfNode &p_if) {
     fsetpos(m_output_file.get(), &cur_pos);
     pos = cur_pos;
     emitInstructions(m_output_file.get(), "               \n"); // a hack to deal with large label values
+    has_ret = false;
 
     if (else_body_ptr) {
         emitInstructions(m_output_file.get(), "%d:  ; else\n", m_local_var_offset++);
         const_cast<CompoundStatementNode *>(else_body_ptr)->accept(*this);
-        emitInstructions(m_output_file.get(), "  br label %%%d\n", m_local_var_offset);
+        if (!has_ret)
+            emitInstructions(m_output_file.get(), "  br label %%%d\n", m_local_var_offset);
         fgetpos(m_output_file.get(), &cur_pos);
         fsetpos(m_output_file.get(), &pos);
-        emitInstructions(m_output_file.get(), "%d", m_local_var_offset);
+        if (!has_ret)
+            emitInstructions(m_output_file.get(), "%d", m_local_var_offset);
         fsetpos(m_output_file.get(), &cur_pos);
-        emitInstructions(m_output_file.get(), "%d:\n", m_local_var_offset++);
+        if (!has_ret)
+            emitInstructions(m_output_file.get(), "%d:\n", m_local_var_offset++);
+        has_ret = false;
     }
 }
 
@@ -524,6 +568,7 @@ void CodeGenerator::visit(ForNode &p_for) {
 }
 
 void CodeGenerator::visit(ReturnNode &p_return) {
+    has_ret = true;
     m_ref_to_value = true;
     p_return.visitChildNodes(*this);
 
@@ -532,9 +577,10 @@ void CodeGenerator::visit(ReturnNode &p_return) {
 
     auto value_type = popFromStack();
     CurrentValueType type = value_type.second;
-    if (type == CurrentValueType::REG) {
-        function_end << "i32 %" << value_type.first.reg << "\n}";
-    }
+    if (type == CurrentValueType::REG) 
+        function_end << "i32 %" << value_type.first.reg;
+    else if (type == CurrentValueType::INT) 
+        function_end << "i32 " << value_type.first.d;
     else
         assert(false && "Should not reach here!");
 

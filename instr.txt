@@ -1,5 +1,5 @@
-clang -S -emit-llvm ./test/basic_cases/sample-code/source.c
-clang ./test/basic_cases/sample-code/source.ll
+clang -S -emit-llvm ./test/advance_cases/sample-code/source.c
+clang ./test/advance_cases/sample-code/source.ll
 
-src/compiler ./test/basic_cases/test-cases/source.p
+src/compiler ./test/advance_cases/test-cases/source.p
 clang source.llvm

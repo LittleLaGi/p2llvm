@@ -42,6 +42,11 @@ class CodeGenerator final : public AstNodeVisitor {
     };
     std::stack<CurrentValueType> m_type_stack;
 
+    // In llvm ir, we can't put br after ret or generate a label for empty basic blocks.
+    // To deal with if statements that constain ret, we need a variabel to indicate
+    // weather there are any ret in "if clause" or "else clause".
+    bool has_ret; 
+
     const SymbolManager *m_symbol_manager_ptr;
     std::string m_source_file_path;
     std::unique_ptr<FILE, FileDeleter> m_output_file;
