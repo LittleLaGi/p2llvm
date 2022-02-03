@@ -18,6 +18,11 @@ class ExpressionNode : public AstNode {
 
     const PType *getInferredType() const { return m_type.get(); }
     void setInferredType(PType *p_type) { m_type.reset(p_type); }
+
+    // add a dummpy virtual function to make ExpressionNode and VariableReferenceNode
+    // polymorphic types, which is necessary for dynamic downcasting
+    // in "void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation)"
+    virtual void dummy() {};
 };
 
 #endif

@@ -47,6 +47,12 @@ class CodeGenerator final : public AstNodeVisitor {
     // weather there are any ret in "if clause" or "else clause".
     bool has_ret; 
 
+    // When an array is passed as an argument, it is "passed by pointer",
+    // the corresponding llvm ir is different with the case when dealing main function.
+    std::stack<bool> call_stack; // it should be empty when dealing main function
+
+    bool dealing_params = false;
+
     const SymbolManager *m_symbol_manager_ptr;
     std::string m_source_file_path;
     std::unique_ptr<FILE, FileDeleter> m_output_file;

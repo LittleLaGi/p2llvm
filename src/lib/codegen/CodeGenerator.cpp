@@ -101,32 +101,65 @@ void CodeGenerator::visit(VariableNode &p_variable) {
     }
 
     if (isInLocal(m_context_stack)) {
+        auto dim = p_variable.getTypePtr()->getDimensions();
         m_local_var_offset_map.emplace(
-            std::piecewise_construct,
-            std::forward_as_tuple(
-                m_symbol_manager_ptr->lookup(p_variable.getName())),
-            std::forward_as_tuple(m_local_var_offset));
-
-        emitInstructions(m_output_file.get(),
-                            "  %c%d = alloca i32, align 4"
-                            " ; allocate %s\n",
-                            '%', m_local_var_offset, p_variable.getName().c_str());
-        if (constant_ptr) {
-            std::stringstream target;
-            target << "%" << p_variable.getName();
+                std::piecewise_construct,
+                std::forward_as_tuple(
+                    m_symbol_manager_ptr->lookup(p_variable.getName())),
+                std::forward_as_tuple(m_local_var_offset));
+        if (!dim.size()) { // primitive
             emitInstructions(m_output_file.get(),
-                             "  store i32 %d, i32* %%%d, align 4"
-                             " ; store to %s\n",
-                             constant_ptr->integer(), m_local_var_offset, target.str().c_str());
+                                "  %%%d = alloca i32, align 4"
+                                " ; allocate %s\n",
+                                 m_local_var_offset, p_variable.getName().c_str());
+            if (constant_ptr) {
+                std::stringstream target;
+                target << "%" << p_variable.getName();
+                emitInstructions(m_output_file.get(),
+                                "  store i32 %d, i32* %%%d, align 4"
+                                " ; store to %s\n",
+                                constant_ptr->integer(), m_local_var_offset, target.str().c_str());
+            }
         }
-
+        else {
+            if (!call_stack.size()) { // in main
+                if (dim.size() == 1) { // 1D array
+                    emitInstructions(m_output_file.get(),
+                                    "  %%%d = alloca [%d x i32], align 16"
+                                    " ; allocate %s\n",
+                                    m_local_var_offset, dim[0], p_variable.getName().c_str());
+                }
+                else if (dim.size() == 2) { // 2D array
+                    emitInstructions(m_output_file.get(),
+                                    "  %%%d = alloca [%d x [%d x i32]], align 16"
+                                    " ; allocate %s\n",
+                                    m_local_var_offset, dim[0], dim[1], p_variable.getName().c_str());
+                }
+                else
+                    assert(false && "Not Supported!");
+            }
+            else { // not in main
+                if (dim.size() == 1) { // 1D array
+                    emitInstructions(m_output_file.get(),
+                                    "  %%%d = alloca i32*, align 8"
+                                    " ; allocate %s\n",
+                                    m_local_var_offset, p_variable.getName().c_str());
+                }
+                else if (dim.size() == 2) { // 2D array
+                    emitInstructions(m_output_file.get(),
+                                    "  %%%d = alloca [%d x i32]*, align 8"
+                                    " ; allocate %s\n",
+                                    m_local_var_offset, dim[1], p_variable.getName().c_str());
+                }
+                else
+                    assert(false && "Not Supported!");
+            }
+        }
         m_local_var_offset += 1;
 
         return;
     }
-
-    assert(false &&
-           "Shouln't reach here. It means that the context has wrong value");
+    assert(false && "Shouln't reach here. It means that the context has wrong value");
 }
 
 void CodeGenerator::visit(ConstantValueNode &p_constant_value) {
@@ -134,6 +167,8 @@ void CodeGenerator::visit(ConstantValueNode &p_constant_value) {
 }
 
 void CodeGenerator::visit(FunctionNode &p_function) {
+    call_stack.push(1);
+
     m_symbol_manager_ptr->reconstructHashTableFromSymbolTable(
         p_function.getSymbolTable());
     m_context_stack.push(CodegenContext::kLocal);
@@ -146,9 +181,26 @@ void CodeGenerator::visit(FunctionNode &p_function) {
     
     // support one decl node in function parameter list for now
     auto &variables = p_function.getParameters()[0]->getVariables();
-    for (auto iter = variables.begin(); iter != variables.end(); ++iter) {
-        function_head << "i32 %" << m_local_var_offset++;
-        if (iter + 1 != variables.end())
+    for (size_t i = 0; i < variables.size(); ++i) {
+        auto type_ptr = variables[i]->getTypePtr();
+        if (!type_ptr->getDimensions().size()) { // primitive
+            if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kIntegerType)
+                function_head << "i32 %" << m_local_var_offset++;
+            else
+                assert(false && "Not supported!");
+        }
+        else { // array, support 1D & 2D integer array for now
+            auto dim = type_ptr->getDimensions();
+            if (dim.size() == 1) { // 1D array
+                function_head << "i32* %" << m_local_var_offset++;
+            }
+            else if (dim.size() == 2) { // 2D array
+                function_head << "[" << dim[1] << " x i32]* %" << m_local_var_offset++;
+            }
+            else
+                assert(false && "Not supported!");
+        }
+        if (i != variables.size() - 1)
             function_head << ", ";
     }
     function_head << ") {";
@@ -165,9 +217,31 @@ void CodeGenerator::visit(FunctionNode &p_function) {
     for (int i = 0; i < variables.size(); ++i) {
         int alloca_var_number = m_local_var_offset - i - 1;
         int param_number = alloca_var_number - variables.size() - 1;
-        emitInstructions(m_output_file.get(),
-                         "  store i32 %%%d, i32* %%%d, align 4\n",
-                         param_number, alloca_var_number);
+        auto type_ptr = variables[i]->getTypePtr();
+        if (!type_ptr->getDimensions().size()) { // primitive
+            if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kIntegerType) {
+                emitInstructions(m_output_file.get(),
+                            "  store i32 %%%d, i32* %%%d, align 4\n",
+                            param_number, alloca_var_number);
+            }
+            else
+                assert(false && "Not supported!");
+        }
+        else { // array
+            auto dim = type_ptr->getDimensions();
+            if (dim.size() == 1) { // 1D array
+                emitInstructions(m_output_file.get(),
+                            "  store i32* %%%d, i32** %%%d, align 8\n",
+                            param_number, alloca_var_number);
+            }
+            else if (dim.size() == 2) { // 2D array
+                emitInstructions(m_output_file.get(),
+                            "  store [%d x i32]* %%%d, [%d x i32]** %%%d, align 8\n",
+                            dim[1], param_number, dim[1], alloca_var_number);
+            }
+            else
+                assert(false && "Not supported!");
+        }
     }
 
     p_function.visitBodyChildNodes(*this);
@@ -176,6 +250,8 @@ void CodeGenerator::visit(FunctionNode &p_function) {
     m_context_stack.pop();
     m_symbol_manager_ptr->removeSymbolsFromHashTable(
         p_function.getSymbolTable());
+
+    call_stack.pop();
 }
 
 void CodeGenerator::visit(CompoundStatementNode &p_compound_statement) {
@@ -331,7 +407,9 @@ void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
     const auto &arguments = p_func_invocation.getArguments();
     m_ref_to_value = true;
     auto visit_ast_node = [&](auto &ast_node) { ast_node->accept(*this); };
+    dealing_params = true;
     for_each(arguments.begin(), arguments.end(), visit_ast_node);
+    dealing_params = false;
 
     std::vector<std::pair<StackValue, CurrentValueType>> args(arguments.size());
     for (size_t i = 0; i < arguments.size(); ++i)
@@ -346,8 +424,33 @@ void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
         auto type = args[i].second;
         if (type == CurrentValueType::INT) 
             func << "i32 " << value.d;
-        else if (type == CurrentValueType::REG)
-            func << "i32 %" << value.reg;
+        else if (type == CurrentValueType::REG) {
+            VariableReferenceNode* var_ptr = dynamic_cast<VariableReferenceNode*>(&*arguments[i]);
+            bool is_array = false;
+            std::map<const SymbolEntry *, size_t>::iterator search;
+            if (var_ptr) {
+                const auto *entry_ptr =
+                m_symbol_manager_ptr->lookup(var_ptr->getName());
+                search = m_local_var_offset_map.find(entry_ptr);
+                if (search != m_local_var_offset_map.end()
+                    && search->first->getTypePtr()->getDimensions().size())
+                    is_array = true;
+            }
+            
+            if (!is_array)
+                func << "i32 %" << value.reg;
+            else {
+                auto dim = search->first->getTypePtr()->getDimensions();
+                if (dim.size() == 1) {
+                    func << "i32* %" << value.reg;
+                }
+                else if (dim.size() == 2) {
+                    func << "[" << dim[1] << " x i32]* %" << value.reg;
+                }
+                else
+                    assert(false && "Not supported!");
+            }
+        }
         else
             assert(false && "Should not reach here!");
 
@@ -355,38 +458,150 @@ void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
             func << ", ";
     } 
     func << ")";
-
     emitInstructions(m_output_file.get(), "  %s\n", func.str().c_str());
 }
 
 void CodeGenerator::visit(VariableReferenceNode &p_variable_ref) {
     // Haven't supported array reference
-    
+
+    p_variable_ref.visitChildNodes(*this);
     const auto *entry_ptr =
             m_symbol_manager_ptr->lookup(p_variable_ref.getName());
         auto search = m_local_var_offset_map.find(entry_ptr);
-    // dereference to get the value if needed
-    if (m_ref_to_value) {
-        emitInstructions(m_output_file.get(), "  %%%ld = load i32, i32* ",
-                        m_local_var_offset);
+    // assume we never access pointers through array references
+    bool is_array = false;
+    if (search != m_local_var_offset_map.end()
+        && search->first->getTypePtr()->getDimensions().size())
+        is_array = true;
+    if (!is_array) { // primitive
+        // dereference to get the value if needed
+        if (m_ref_to_value) {
+            emitInstructions(m_output_file.get(), "  %%%ld = load i32, i32* ",
+                            m_local_var_offset);
 
-        pushRegToStack(m_local_var_offset++);
+            pushRegToStack(m_local_var_offset++);
 
-        if (search == m_local_var_offset_map.end()) {
-            // global variable reference
-            emitInstructions(m_output_file.get(), "@%s, align 4\n",
-                            p_variable_ref.getNameCString());
-        } else {
-            // local variable reference
-            emitInstructions(m_output_file.get(), "%%%ld, align 4\n",
-                            search->second);
+            if (search == m_local_var_offset_map.end()) { // global variable reference
+                emitInstructions(m_output_file.get(), "@%s, align 4\n",
+                                p_variable_ref.getNameCString());
+            } else { // local variable reference
+                emitInstructions(m_output_file.get(), "%%%ld, align 4\n",
+                                search->second);
+            }
+        }
+        else {  // get the reg
+            if (search == m_local_var_offset_map.end()) // global variable reference
+                pushGlobalVarToStack(p_variable_ref.getNameCString());
+            else // local variable reference
+                pushRegToStack(search->second);
         }
     }
-    else {  // get the reg
-        if (search == m_local_var_offset_map.end()) // global variable reference
-            pushGlobalVarToStack(p_variable_ref.getNameCString());
-        else // local variable reference
-            pushRegToStack(search->second);
+    else { // array
+        auto dim_sz = p_variable_ref.getIndices().size();
+        auto dim = search->first->getTypePtr()->getDimensions();
+        if (!call_stack.size()) { // in main
+            if (dealing_params) {
+                if (dim.size() == 1) {
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 0, i64 0\n",
+                                m_local_var_offset, dim[0], dim[0], search->second);
+                }
+                else if (dim.size() == 2) {
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x [%d x i32]], [%d x [%d x i32]]* %%%d, i64 0, i64 0\n",
+                                m_local_var_offset, dim[0], dim[1], dim[0], dim[1], search->second);
+                }
+                else
+                    assert(false && "Not supported!");
+
+                pushRegToStack(m_local_var_offset++);
+            }
+            else if (m_ref_to_value) { // dereference to get the value if needed
+                auto value_type1 = popFromStack();
+                assert(value_type1.second == CurrentValueType::INT && "Must be an integer!");
+                auto index1 = value_type1.first.d;
+                if (dim_sz == 1) {
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset++, dim[0], dim[0], search->second, index1);
+                    emitInstructions(m_output_file.get(), "  %%%d = load i32, i32* %%%d, align 4\n",
+                                m_local_var_offset, m_local_var_offset - 1);
+                }
+                else if (dim_sz == 2) {
+                    auto value_type2 = popFromStack();
+                    assert(value_type2.second == CurrentValueType::INT && "Must be an integer!");
+                    auto index2 = value_type2.first.d;
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x [%d x i32]], [%d x [%d x i32]]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset++, dim[0], dim[1], dim[0], dim[1], search->second, index2);
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset, dim[1], dim[1], m_local_var_offset - 1, index1);
+                    m_local_var_offset += 1;
+                    emitInstructions(m_output_file.get(), "  %%%d = load i32, i32* %%%d, align 4\n",
+                                m_local_var_offset, m_local_var_offset - 1);
+                }
+                else
+                    assert(false && "Not supported!");
+
+                pushRegToStack(m_local_var_offset++);
+            }
+            else {  // get the reg
+                auto value_type1 = popFromStack();
+                assert(value_type1.second == CurrentValueType::INT && "Must be an integer!");
+                auto index1 = value_type1.first.d;
+                if (dim_sz == 1) {
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset, dim[0], dim[0], search->second, index1);
+                }
+                else if (dim_sz == 2) {
+                    auto value_type2 = popFromStack();
+                    assert(value_type2.second == CurrentValueType::INT && "Must be an integer!");
+                    auto index2 = value_type2.first.d;
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x [%d x i32]], [%d x [%d x i32]]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset++, dim[0], dim[1], dim[0], dim[1], search->second, index2);
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset, dim[1], dim[1], m_local_var_offset - 1, index1);
+                }
+                else
+                    assert(false && "Not supported!");
+
+                pushRegToStack(m_local_var_offset++);
+            }
+        }
+        else { // not in main
+            if (m_ref_to_value) {
+                auto value_type1 = popFromStack();
+                assert(value_type1.second == CurrentValueType::INT && "Must be an integer!");
+                auto index1 = value_type1.first.d;
+                if (dim_sz == 1) {
+                    emitInstructions(m_output_file.get(), "  %%%d = load i32*, i32** %%%d, align 8\n",
+                                m_local_var_offset++, search->second);
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds i32, i32* %%%d, i64 %d\n",
+                                m_local_var_offset, m_local_var_offset - 1, index1);
+                    m_local_var_offset += 1;
+                    emitInstructions(m_output_file.get(), "  %%%d = load i32, i32* %%%d, align 4\n",
+                                m_local_var_offset, m_local_var_offset - 1);
+                }
+                else if (dim_sz == 2) {
+                    auto value_type2 = popFromStack();
+                    assert(value_type2.second == CurrentValueType::INT && "Must be an integer!");
+                    auto index2 = value_type2.first.d;
+                    emitInstructions(m_output_file.get(), "  %%%d = load [%d x i32]*, [%d x i32]** %%%d, align 8\n",
+                                m_local_var_offset++, dim[1], dim[1], search->second);
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 %d\n",
+                                m_local_var_offset, dim[1], dim[1], m_local_var_offset - 1, index2);
+                    m_local_var_offset += 1;
+                    emitInstructions(m_output_file.get(), "  %%%d = getelementptr inbounds [%d x i32], [%d x i32]* %%%d, i64 0, i64 %d\n",
+                                m_local_var_offset, dim[1], dim[1], m_local_var_offset - 1, index1);
+                    m_local_var_offset += 1;
+                    emitInstructions(m_output_file.get(), "  %%%d = load i32, i32* %%%d, align 4\n",
+                                m_local_var_offset, m_local_var_offset - 1);
+                }
+                else
+                    assert(false && "Not supported!");
+
+                pushRegToStack(m_local_var_offset++);
+            }
+            else {  // get the reg
+                assert(false && "Not supported!");
+            }
+        }
     }
 }
 
@@ -396,23 +611,32 @@ void CodeGenerator::visit(AssignmentNode &p_assignment) {
     m_ref_to_value = true; // as rval
     const_cast<ExpressionNode &>(p_assignment.getExpr()).accept(*this);
 
+    auto value_type = popFromStack();
+    CurrentValueType type = value_type.second;
+
     std::stringstream target, name;
     const auto *entry_ptr = m_symbol_manager_ptr->lookup(p_assignment.getLvalue().getName());
     if (!entry_ptr->getLevel()) { // global variable
         name << "@" << p_assignment.getLvalue().getName();
         target << "@" << p_assignment.getLvalue().getName();
     }
-    else // local variable
-    {
+    else { // local variable
         auto search = m_local_var_offset_map.find(entry_ptr);
         assert(search != m_local_var_offset_map.end() &&
                         "Should find unnamed value for the variable reference!");
-        name << "%" << search->second;
-        target << "%" << p_assignment.getLvalue().getName();
+        auto dim = search->first->getTypePtr()->getDimensions();
+        if (!dim.size()) { // primitive type
+            name << "%" << search->second;
+            target << "%" << p_assignment.getLvalue().getName();
+        }
+        else { // array type
+            auto value_type = popFromStack();
+            assert(value_type.second == CurrentValueType::REG);
+            name << "%" << value_type.first.reg;
+            target << "%" << p_assignment.getLvalue().getName();
+        }
     }
 
-    auto value_type = popFromStack();
-    CurrentValueType type = value_type.second;
     if (type == CurrentValueType::INT) {
         int val = value_type.first.d;
         emitInstructions(m_output_file.get(),
@@ -435,12 +659,21 @@ void CodeGenerator::visit(ReadNode &p_read) {
     m_ref_to_value = false; 
     p_read.visitChildNodes(*this);
     auto value_type = popFromStack();
-    assert(value_type.second == CurrentValueType::GLOBAL && "Should be a global variable type!");
-    auto var = value_type.first.global_var;
-    emitInstructions(m_output_file.get(), 
-                    "  %%%d = call i32 (i8*, ...) @__isoc99_scanf(i8* getelementptr inbounds "
-                    "([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32* @%s)\n",
-                    m_local_var_offset++, var);
+    if (value_type.second == CurrentValueType::GLOBAL) {
+        auto var = value_type.first.global_var;
+        emitInstructions(m_output_file.get(), 
+                        "  %%%d = call i32 (i8*, ...) @__isoc99_scanf(i8* getelementptr inbounds "
+                        "([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32* @%s)\n",
+                        m_local_var_offset++, var);
+    }
+    else if (value_type.second == CurrentValueType::REG) {
+        emitInstructions(m_output_file.get(), 
+                        "  %%%d = call i32 (i8*, ...) @__isoc99_scanf(i8* getelementptr inbounds "
+                        "([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32* %%%d)\n",
+                        m_local_var_offset++, value_type.first.reg);
+    }
+    else
+        assert(false && "Note supported!");
 }
 
 void CodeGenerator::visit(IfNode &p_if) {
