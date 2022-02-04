@@ -27,6 +27,7 @@ class CodeGenerator final : public AstNodeVisitor {
   private:
     union StackValue {
       int d;
+      bool b;
       int reg; // llvm register
       float f;
       const char *str;
@@ -35,6 +36,7 @@ class CodeGenerator final : public AstNodeVisitor {
     std::stack<StackValue> m_value_stack;
     enum class CurrentValueType {
       INT,
+      BOOL,
       REG,
       FLOAT,
       STR,
@@ -103,6 +105,7 @@ class CodeGenerator final : public AstNodeVisitor {
     // storeArgumentsToParameters(const FunctionNode::DeclNodes &p_parameters);
 
     void pushIntToStack(int d);
+    void pushBoolToStack(int b);
     void pushRegToStack(int reg);
     void pushFloatToStack(float f);
     void pushStrToStack(const char *str);

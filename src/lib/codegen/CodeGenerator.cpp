@@ -108,10 +108,21 @@ void CodeGenerator::visit(VariableNode &p_variable) {
                     m_symbol_manager_ptr->lookup(p_variable.getName())),
                 std::forward_as_tuple(m_local_var_offset));
         if (!dim.size()) { // primitive
-            emitInstructions(m_output_file.get(),
-                                "  %%%d = alloca i32, align 4"
-                                " ; allocate %s\n",
-                                 m_local_var_offset, p_variable.getName().c_str());
+            if (p_variable.getTypePtr()->isInteger()) {
+                emitInstructions(m_output_file.get(),
+                                    "  %%%d = alloca i32, align 4"
+                                    " ; allocate %s\n",
+                                    m_local_var_offset, p_variable.getName().c_str());
+            }
+            else if (p_variable.getTypePtr()->isBool()) {
+                emitInstructions(m_output_file.get(),
+                                    "  %%%d = alloca i1, align 4"
+                                    " ; allocate %s\n",
+                                    m_local_var_offset, p_variable.getName().c_str());
+            }
+            else
+                assert(false && "Not supported!");
+
             if (constant_ptr) {
                 std::stringstream target;
                 target << "%" << p_variable.getName();
@@ -163,7 +174,11 @@ void CodeGenerator::visit(VariableNode &p_variable) {
 }
 
 void CodeGenerator::visit(ConstantValueNode &p_constant_value) {
-    pushIntToStack(p_constant_value.getConstantPtr()->integer());
+    auto type = p_constant_value.getInferredType();
+    if (type->isInteger())
+        pushIntToStack(p_constant_value.getConstantPtr()->integer());
+    else if (type->isBool())
+        pushBoolToStack(p_constant_value.getConstantPtr()->integer());
 }
 
 void CodeGenerator::visit(FunctionNode &p_function) {
@@ -175,33 +190,43 @@ void CodeGenerator::visit(FunctionNode &p_function) {
 
     m_local_var_offset = 0;
 
-    std::string return_type = "i32";
+    std::string return_type;
+    if (p_function.getTypePtr()->isInteger())
+        return_type = "i32";
+    else if (p_function.getTypePtr()->isBool())
+        return_type = "i1";
+    else
+        assert(false && "Not supported!");
     std::stringstream function_head;
     function_head << "\ndefine " << return_type << " @" << p_function.getName() << "(";
     
     // support one decl node in function parameter list for now
-    auto &variables = p_function.getParameters()[0]->getVariables();
-    for (size_t i = 0; i < variables.size(); ++i) {
-        auto type_ptr = variables[i]->getTypePtr();
-        if (!type_ptr->getDimensions().size()) { // primitive
-            if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kIntegerType)
-                function_head << "i32 %" << m_local_var_offset++;
-            else
-                assert(false && "Not supported!");
-        }
-        else { // array, support 1D & 2D integer array for now
-            auto dim = type_ptr->getDimensions();
-            if (dim.size() == 1) { // 1D array
-                function_head << "i32* %" << m_local_var_offset++;
+    for (auto& params : p_function.getParameters()) {
+        auto &variables = params->getVariables();
+        for (size_t i = 0; i < variables.size(); ++i) {
+            auto type_ptr = variables[i]->getTypePtr();
+            if (!type_ptr->getDimensions().size()) { // primitive
+                if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kIntegerType)
+                    function_head << "i32 %" << m_local_var_offset++;
+                else if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kBoolType)
+                    function_head << "i1 %" << m_local_var_offset++;
+                else
+                    assert(false && "Not supported!");
             }
-            else if (dim.size() == 2) { // 2D array
-                function_head << "[" << dim[1] << " x i32]* %" << m_local_var_offset++;
+            else { // array, support 1D & 2D integer array for now
+                auto dim = type_ptr->getDimensions();
+                if (dim.size() == 1) { // 1D array
+                    function_head << "i32* %" << m_local_var_offset++;
+                }
+                else if (dim.size() == 2) { // 2D array
+                    function_head << "[" << dim[1] << " x i32]* %" << m_local_var_offset++;
+                }
+                else
+                    assert(false && "Not supported!");
             }
-            else
-                assert(false && "Not supported!");
+            if (params != *(p_function.getParameters().end() - 1) || i != variables.size() - 1)
+                function_head << ", ";
         }
-        if (i != variables.size() - 1)
-            function_head << ", ";
     }
     function_head << ") {";
 
@@ -213,34 +238,47 @@ void CodeGenerator::visit(FunctionNode &p_function) {
     for_each(p_function.getParameters().begin(),
              p_function.getParameters().end(), visit_ast_node);
 
-    // store parameter's value to alloca variable
-    for (int i = 0; i < variables.size(); ++i) {
-        int alloca_var_number = m_local_var_offset - i - 1;
-        int param_number = alloca_var_number - variables.size() - 1;
-        auto type_ptr = variables[i]->getTypePtr();
-        if (!type_ptr->getDimensions().size()) { // primitive
-            if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kIntegerType) {
-                emitInstructions(m_output_file.get(),
-                            "  store i32 %%%d, i32* %%%d, align 4\n",
-                            param_number, alloca_var_number);
+    int offset = 0;
+    int var_num = 0;
+    for (auto& params : p_function.getParameters())
+        var_num += params->getVariables().size();
+    for (auto iter = p_function.getParameters().rbegin(); iter != p_function.getParameters().rend(); ++iter) {
+        auto &variables = (*iter)->getVariables();
+        // store parameter's value to alloca variable
+        for (int i = 0; i < variables.size(); ++i) {
+            int alloca_var_number = m_local_var_offset - offset - 1;
+            int param_number = alloca_var_number - var_num - 1;
+            offset += 1;
+            auto type_ptr = variables[i]->getTypePtr();
+            if (!type_ptr->getDimensions().size()) { // primitive
+                if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kIntegerType) {
+                    emitInstructions(m_output_file.get(),
+                                "  store i32 %%%d, i32* %%%d, align 4 ; store parameter's value to alloca variable\n",
+                                param_number, alloca_var_number);
+                }
+                else if (type_ptr->getPrimitiveType() == PType::PrimitiveTypeEnum::kBoolType) {
+                    emitInstructions(m_output_file.get(),
+                                "  store i1 %%%d, i1* %%%d, align 4 ; store parameter's value to alloca variable\n",
+                                param_number, alloca_var_number);
+                }
+                else
+                    assert(false && "Not supported!");
             }
-            else
-                assert(false && "Not supported!");
-        }
-        else { // array
-            auto dim = type_ptr->getDimensions();
-            if (dim.size() == 1) { // 1D array
-                emitInstructions(m_output_file.get(),
-                            "  store i32* %%%d, i32** %%%d, align 8\n",
-                            param_number, alloca_var_number);
+            else { // array
+                auto dim = type_ptr->getDimensions();
+                if (dim.size() == 1) { // 1D array
+                    emitInstructions(m_output_file.get(),
+                                "  store i32* %%%d, i32** %%%d, align 8\n",
+                                param_number, alloca_var_number);
+                }
+                else if (dim.size() == 2) { // 2D array
+                    emitInstructions(m_output_file.get(),
+                                "  store [%d x i32]* %%%d, [%d x i32]** %%%d, align 8\n",
+                                dim[1], param_number, dim[1], alloca_var_number);
+                }
+                else
+                    assert(false && "Not supported!");
             }
-            else if (dim.size() == 2) { // 2D array
-                emitInstructions(m_output_file.get(),
-                            "  store [%d x i32]* %%%d, [%d x i32]** %%%d, align 8\n",
-                            dim[1], param_number, dim[1], alloca_var_number);
-            }
-            else
-                assert(false && "Not supported!");
         }
     }
 
@@ -373,6 +411,12 @@ void CodeGenerator::visit(BinaryOperatorNode &p_bin_op) {
         break;
     case Operator::kNotEqualOp:
         break;
+    case Operator::kAndOp:
+        if (type1 == CurrentValueType::REG && type2 == CurrentValueType::REG)
+            emitInstructions(m_output_file.get(), "  %%%d = and  i1 %%%d, %%%d\n", m_local_var_offset, reg1, reg2);
+        else
+            assert(false && "Not supported!\n");
+        break;
     default:
         assert(false && "unsupported binary operator");
         break;
@@ -392,6 +436,12 @@ void CodeGenerator::visit(UnaryOperatorNode &p_un_op) {
     case Operator::kNegOp:
         if (type == CurrentValueType::INT)
             emitInstructions(m_output_file.get(), "  %%%d = sub nsw i32 0, %d\n", m_local_var_offset, value.d);
+        else
+            assert(false && "Should not reach here!");
+        break;
+    case Operator::kNotOp:
+        if (type == CurrentValueType::REG && p_un_op.getInferredType()->isBool())
+            emitInstructions(m_output_file.get(), "  %%%d = xor i1 1, %%%d\n", m_local_var_offset, value.d);
         else
             assert(false && "Should not reach here!");
         break;
@@ -416,14 +466,23 @@ void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
         args[arguments.size() - 1 - i] = popFromStack();
     pushRegToStack(m_local_var_offset);
     
+    std::string return_type;
+    if (p_func_invocation.getInferredType()->isInteger())
+        return_type = "i32";
+    else if (p_func_invocation.getInferredType()->isBool())
+        return_type = "i1";
+    else
+        assert(false && "Not supported!");
     std::stringstream func;
-    func << "%" << m_local_var_offset++ << " = call i32 @" 
+    func << "%" << m_local_var_offset++ << " = call "<< return_type <<" @" 
         << p_func_invocation.getNameCString() << "(";
     for (size_t i = 0; i < arguments.size(); ++i) {
         auto value = args[i].first;
         auto type = args[i].second;
         if (type == CurrentValueType::INT) 
             func << "i32 " << value.d;
+        else if (type == CurrentValueType::BOOL)
+            func << "i1 " << value.b;
         else if (type == CurrentValueType::REG) {
             VariableReferenceNode* var_ptr = dynamic_cast<VariableReferenceNode*>(&*arguments[i]);
             bool is_array = false;
@@ -437,8 +496,14 @@ void CodeGenerator::visit(FunctionInvocationNode &p_func_invocation) {
                     is_array = true;
             }
             
-            if (!is_array)
-                func << "i32 %" << value.reg;
+            if (!is_array) {
+                if (arguments[i]->getInferredType()->isInteger())
+                    func << "i32 %" << value.reg;
+                else if (arguments[i]->getInferredType()->isBool())
+                    func << "i1 %" << value.reg;
+                else
+                    assert(false && "Not supported!");
+            }
             else {
                 auto dim = search->first->getTypePtr()->getDimensions();
                 if (dim.size() == 1) {
@@ -475,9 +540,13 @@ void CodeGenerator::visit(VariableReferenceNode &p_variable_ref) {
         is_array = true;
     if (!is_array) { // primitive
         // dereference to get the value if needed
+        std::string type = "i32";
+        if (search != m_local_var_offset_map.end()
+            && search->first->getTypePtr()->isBool())
+            type = "i1";
         if (m_ref_to_value) {
-            emitInstructions(m_output_file.get(), "  %%%ld = load i32, i32* ",
-                            m_local_var_offset);
+            emitInstructions(m_output_file.get(), "  %%%ld = load %s, %s* ",
+                            m_local_var_offset, type.c_str(), type.c_str());
 
             pushRegToStack(m_local_var_offset++);
 
@@ -637,19 +706,42 @@ void CodeGenerator::visit(AssignmentNode &p_assignment) {
         }
     }
 
-    if (type == CurrentValueType::INT) {
-        int val = value_type.first.d;
-        emitInstructions(m_output_file.get(),
-                        "  store i32 %d, i32* %s, align 4"
-                        " ; store to %s\n",
-                        val, name.str().c_str(), target.str().c_str());
+    
+    if (p_assignment.getLvalue().getInferredType()->isInteger()) {
+        if (type == CurrentValueType::INT) {
+            int val = value_type.first.d;
+            emitInstructions(m_output_file.get(),
+                            "  store i32 %d, i32* %s, align 4"
+                            " ; store to %s\n",
+                            val, name.str().c_str(), target.str().c_str());
+        }
+        else if (type == CurrentValueType::REG) {
+            int reg = value_type.first.reg;
+            emitInstructions(m_output_file.get(),
+                            "  store i32 %%%d, i32* %s, align 4"
+                            " ; store to %s\n",
+                            reg, name.str().c_str(), target.str().c_str());
+        }
+        else
+            assert(false && "Should not reach here!");
     }
-    else if (type == CurrentValueType::REG) {
-        int reg = value_type.first.reg;
-        emitInstructions(m_output_file.get(),
-                        "  store i32 %%%d, i32* %s, align 4"
-                        " ; store to %s\n",
-                        reg, name.str().c_str(), target.str().c_str());
+    else if (p_assignment.getLvalue().getInferredType()->isBool()) {
+        if (type == CurrentValueType::BOOL) {
+            int val = value_type.first.d;
+            emitInstructions(m_output_file.get(),
+                            "  store i1 %d, i1* %s, align 4"
+                            " ; store to %s\n",
+                            val, name.str().c_str(), target.str().c_str());
+        }
+        else if (type == CurrentValueType::REG) {
+            int reg = value_type.first.reg;
+            emitInstructions(m_output_file.get(),
+                            "  store i1 %%%d, i1* %s, align 4"
+                            " ; store to %s\n",
+                            reg, name.str().c_str(), target.str().c_str());
+        }
+        else
+            assert(false && "Should not reach here!");
     }
     else
         assert(false && "Should not reach here!");
@@ -810,13 +902,25 @@ void CodeGenerator::visit(ReturnNode &p_return) {
 
     auto value_type = popFromStack();
     CurrentValueType type = value_type.second;
-    if (type == CurrentValueType::REG) 
-        function_end << "i32 %" << value_type.first.reg;
-    else if (type == CurrentValueType::INT) 
-        function_end << "i32 " << value_type.first.d;
+    if (p_return.getReturnValue().getInferredType()->isInteger()) {
+        if (type == CurrentValueType::REG) 
+            function_end << "i32 %" << value_type.first.reg;
+        else if (type == CurrentValueType::INT) 
+            function_end << "i32 " << value_type.first.d;
+        else
+            assert(false && "Should not reach here!");
+    }
+    else if (p_return.getReturnValue().getInferredType()->isBool()) {
+        if (type == CurrentValueType::REG) 
+            function_end << "i1 %" << value_type.first.reg;
+        else if (type == CurrentValueType::BOOL) 
+            function_end << "i1 " << value_type.first.b;
+        else
+            assert(false && "Should not reach here!");
+    }
     else
         assert(false && "Should not reach here!");
-
+    
     emitInstructions(m_output_file.get(), "%s\n", function_end.str().c_str());
 }
 
@@ -828,6 +932,13 @@ void CodeGenerator::pushIntToStack(int d) {
     value.d = d;
     m_value_stack.push(value);
     m_type_stack.push(CurrentValueType::INT);
+}
+
+void CodeGenerator::pushBoolToStack(int b) {
+    StackValue value;
+    value.b = b;
+    m_value_stack.push(value);
+    m_type_stack.push(CurrentValueType::BOOL);
 }
 
 void CodeGenerator::pushRegToStack(int reg) {
@@ -867,6 +978,9 @@ CodeGenerator::popFromStack() {
     StackValue value;
     if (type == CurrentValueType::INT) {
         value.d = m_value_stack.top().d;
+    }
+    else if (type == CurrentValueType::BOOL) {
+        value.b = m_value_stack.top().b;
     }
     else if (type == CurrentValueType::REG) {
         value.reg = m_value_stack.top().reg;
